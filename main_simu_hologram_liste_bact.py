@@ -25,7 +25,7 @@ if __name__ == "__main__":
 
    
     #paramètres
-    chemin_base = "c:/TRAVAIL/simu_holo_bact"
+    chemin_base = "D:\MANIP_holo\simu_holo_bact"
     if not os.path.exists(chemin_base):
         os.mkdir(chemin_base)
 
@@ -55,9 +55,16 @@ if __name__ == "__main__":
 
 
     positions_bact = [
-        [256*vox_size_xy, 256*vox_size_xy, 50*vox_size_z, 0.0, 0.0],
-        [512*vox_size_xy, 512*vox_size_xy, 100*vox_size_z, 0.0, 0.0],
-        [768*vox_size_xy, 768*vox_size_xy, 150*vox_size_z, 0.0, 0.0]
+        [100*vox_size_xy, 100*vox_size_xy, 100*vox_size_z, 0.0, 0.0],
+        [200*vox_size_xy, 200*vox_size_xy, 100*vox_size_z, 0.0, 10.0],
+        [300*vox_size_xy, 300*vox_size_xy, 100*vox_size_z, 0.0, 20.0],
+        [400*vox_size_xy, 400*vox_size_xy, 100*vox_size_z, 0.0, 30.0],
+        [500*vox_size_xy, 500*vox_size_xy, 100*vox_size_z, 0.0, 40.0],
+        [600*vox_size_xy, 600*vox_size_xy, 100*vox_size_z, 0.0, 50.0],
+        [700*vox_size_xy, 700*vox_size_xy, 100*vox_size_z, 0.0, 60.0],
+        [800*vox_size_xy, 800*vox_size_xy, 100*vox_size_z, 0.0, 70.0],
+        [900*vox_size_xy, 900*vox_size_xy, 100*vox_size_z, 0.0, 80.0],
+        [1000*vox_size_xy, 1000*vox_size_xy, 100*vox_size_z, 0.0, 90.0]
     ]
 
     #parametres source illumination

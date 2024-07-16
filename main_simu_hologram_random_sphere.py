@@ -23,9 +23,8 @@ import argparse
 
 if __name__ == "__main__":
 
-   
     #paramètres
-    chemin_base = "c:/TRAVAIL/simu_holo"
+    chemin_base = r"D:/MANIP_holo/simu_holo_spheres"
     if not os.path.exists(chemin_base):
         os.mkdir(chemin_base)
 
@@ -38,12 +37,12 @@ if __name__ == "__main__":
 
     #Phi
     transmission_milieu = 1.0
-    transmission_sphere = 1.0
+    transmission_sphere = 0.0
     index_milieu = 1.33
     index_sphere = 1.35
 
     #Camera
-    pix_size = 5.5e-6
+    pix_size = 7e-6
     grossissement = 40
     vox_size_xy = pix_size / grossissement
     vox_size_z = 100e-6 / z_size
@@ -51,18 +50,11 @@ if __name__ == "__main__":
     volume_min_max = [0, vox_size_xy*x_size, 0, vox_size_xy*y_size, 0, vox_size_z*z_size]
 
     #liste sphere
-    radius = 0.8e-6
-    transmission = 0.0
-
-    positions_spheres = [
-        [256*vox_size_xy, 256*vox_size_xy, 50*vox_size_z, radius],
-        [512*vox_size_xy, 512*vox_size_xy, 100*vox_size_z, radius],
-        [768*vox_size_xy, 768*vox_size_xy, 150*vox_size_z, radius]
-    ]
+    radius = 1e-6
 
     #parametres source illumination
     moyenne = 1.0
-    ecart_type = 0.05
+    ecart_type = 1.0
     bruit_gaussien = np.abs(np.random.normal(moyenne, ecart_type, [x_size, y_size]))
     # traitement_holo.affichage(bruit_gaussien)
     # plt.hist(bruit_gaussien.flatten(), bins=200)
