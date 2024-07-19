@@ -30,7 +30,7 @@ import argparse
 if __name__ == "__main__":
 
     #paramètres
-    chemin_base = "c:/TRAVAIL/simu_holo"
+    chemin_base = r"D:/MANIP_holo/simu_holo_bact"
     if not os.path.exists(chemin_base):
         os.mkdir(chemin_base)
 
