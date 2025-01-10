@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-
 from simu_hologram import *
 import numpy as np
 import cupy as cp
@@ -17,6 +16,7 @@ from PIL import Image
 import PIL
 import argparse
 
+
 #######################################################################################################
 #########################################           MAIN        #######################################
 #######################################################################################################
@@ -25,12 +25,14 @@ import argparse
 if __name__ == "__main__":
 
     #paramètres
-    chemin_base = os.getcwd() + "/simu_bact"
+    #paramètres
+    chemin_base = os.getcwd() + "/simu_bacteries"
     if not os.path.exists(chemin_base):
         os.mkdir(chemin_base)
 
-    nb_holo_to_simulate = 10
-    number_of_bacteria = 20
+
+    nb_holo_to_simulate = 1000
+    number_of_bacteria = 30
 
     #volume (taille holo & nombre de plans)
     x_size = 1024

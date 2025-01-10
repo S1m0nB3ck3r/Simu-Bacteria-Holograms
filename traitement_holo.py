@@ -38,10 +38,6 @@ import cupy as cp
 from cupy.fft import rfft2, fft2, ifft2, fftshift, ifftshift, fftn, ifftn
 
 
-def test_var(var):
-    return "VAR: " + str(type(var)) + str(var)
-
-
 def read_image(path_image, sizeX = 0, sizeY = 0):
         
         h_holo = np.asarray(Image.open(path_image))
@@ -79,12 +75,13 @@ def save_image(image_array, path_image):
 def affichage(plan):
 
     if isinstance(plan, cp.ndarray):
-        h_plan = cp.asnumpy(plan)
+        h_plan = cp.asnumpy(plan).astype(np.float32)
         min = h_plan.min()
         max = h_plan.max()
         img = Image.fromarray((h_plan - min) * 255 / (max - min))
 
     else:
+        h_plan = plan.astype(np.float32)
         min = plan.min()
         max = plan.max()
         img = Image.fromarray((plan - min) * 255 / (max - min))
@@ -119,9 +116,9 @@ def phase(planComplex):
     else:
         return(np.arctan(np.imag(planComplex) /np.real(planComplex)))
 
-def affiche_particule(x, y, z, boxSizeXY, boxSizeZ, d_volume):
+def affiche_particule(x, y, z, boxSizeXY, boxSizeZ, volume):
 
-    sizeX, sizeY, sizeZ = d_volume.shape
+    sizeX, sizeY, sizeZ = volume.shape
     planXY = np.zeros(shape=(boxSizeXY, boxSizeXY))
     planXZ = np.zeros(shape=(boxSizeXY, boxSizeZ))
     planYZ = np.zeros(shape=(boxSizeXY, boxSizeZ))
@@ -142,25 +139,25 @@ def affiche_particule(x, y, z, boxSizeXY, boxSizeZ, d_volume):
     zMin = zMin if zMin > 0 else 0 
     zMax = zMax if zMax < sizeZ else sizeZ
 
-    if isinstance(d_volume, cp.ndarray):
-        if (d_volume.dtype == cp.complex64):
-            planXY_t = cp.asnumpy(intensite(d_volume[xMin : xMax, yMin : yMax, z ]))
+    if isinstance(volume, cp.ndarray):
+        if (volume.dtype == cp.complex64):
+            planXY_t = cp.asnumpy(intensite(volume[xMin : xMax, yMin : yMax, z ]))
             planXY[0:boxSizeXY, 0:boxSizeXY] = planXY_t
-            planXZ[0:boxSizeXY, 0:boxSizeZ] = cp.asnumpy(intensite(d_volume[xMin : xMax, y, zMin : zMax]))
-            planYZ[0:boxSizeXY, 0:boxSizeZ] = cp.asnumpy(intensite(d_volume[x , yMin : yMax, zMin : zMax ]))
+            planXZ[0:boxSizeXY, 0:boxSizeZ] = cp.asnumpy(intensite(volume[xMin : xMax, y, zMin : zMax]))
+            planYZ[0:boxSizeXY, 0:boxSizeZ] = cp.asnumpy(intensite(volume[x , yMin : yMax, zMin : zMax ]))
         else:
-            planXY[0:boxSizeXY, 0:boxSizeXY]  = cp.asnumpy(d_volume[xMin : xMax, yMin : yMax, z ])
-            planXZ[0:boxSizeXY, 0:boxSizeZ]  = cp.asnumpy(d_volume[xMin : xMax, y, zMin : zMax])
-            planYZ[0:boxSizeXY, 0:boxSizeZ]  = cp.asnumpy(d_volume[x , yMin : yMax, zMin : zMax ])
+            planXY[0:boxSizeXY, 0:boxSizeXY]  = cp.asnumpy(volume[xMin : xMax, yMin : yMax, z ])
+            planXZ[0:boxSizeXY, 0:boxSizeZ]  = cp.asnumpy(volume[xMin : xMax, y, zMin : zMax])
+            planYZ[0:boxSizeXY, 0:boxSizeZ]  = cp.asnumpy(volume[x , yMin : yMax, zMin : zMax ])
     else:
-        if (d_volume.dtype == np.complex64):
-            planXY[0:boxSizeXY, 0:boxSizeXY]  = intensite(d_volume[xMin : xMax, yMin : yMax, z ])
-            planXZ[0:boxSizeXY, 0:boxSizeZ]  = intensite(d_volume[xMin : xMax, y, zMin : zMax])
-            planYZ[0:boxSizeXY, 0:boxSizeZ]  = intensite(d_volume[x , yMin : yMax, zMin : zMax ])
+        if (volume.dtype == np.complex64):
+            planXY[0:boxSizeXY, 0:boxSizeXY]  = intensite(volume[xMin : xMax, yMin : yMax, z ])
+            planXZ[0:boxSizeXY, 0:boxSizeZ]  = intensite(volume[xMin : xMax, y, zMin : zMax])
+            planYZ[0:boxSizeXY, 0:boxSizeZ]  = intensite(volume[x , yMin : yMax, zMin : zMax ])
         else:
-            planXY[0:boxSizeXY, 0:boxSizeXY]  = d_volume[xMin : xMax, yMin : yMax, z ]
-            planXZ[0:boxSizeXY, 0:boxSizeZ]  = d_volume[xMin : xMax, y, zMin : zMax]
-            planYZ[0:boxSizeXY, 0:boxSizeZ]  = d_volume[x , yMin : yMax, zMin : zMax ]
+            planXY[0:boxSizeXY, 0:boxSizeXY]  = volume[xMin : xMax, yMin : yMax, z ]
+            planXZ[0:boxSizeXY, 0:boxSizeZ]  = volume[xMin : xMax, y, zMin : zMax]
+            planYZ[0:boxSizeXY, 0:boxSizeZ]  = volume[x , yMin : yMax, zMin : zMax ]
 
     min = planXY.min()
     max = planXY.max()

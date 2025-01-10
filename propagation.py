@@ -233,7 +233,7 @@ lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance, f_pix_min, 
     d_FFT_HOLO = fftshift(fft2(d_HOLO, norm = 'ortho'))
 
     if ((f_pix_min != 0) and (f_pix_max != 0)):
-        d_filter_FFT(d_FFT_HOLO, d_FFT_HOLO, nb_pix_X, nb_pix_Y, f_pix_min, f_pix_max)
+        d_filter_FFT[nBlock, nthread](d_FFT_HOLO, d_FFT_HOLO, nb_pix_X, nb_pix_Y, f_pix_min, f_pix_max)
 
     d_calc_kernel_angular_spectrum_jit[nBlock, nthread](d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
     d_FFT_HOLO_PROPAG = d_FFT_HOLO * d_KERNEL

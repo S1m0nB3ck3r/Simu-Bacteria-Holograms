@@ -8,7 +8,6 @@ import os
 import math
 import time
 import matplotlib.pyplot as plt
-from mayavi import mlab
 import datetime
 
 import propagation
@@ -21,13 +20,10 @@ import argparse
 #########################################           MAIN        #######################################
 #######################################################################################################
 
-
 if __name__ == "__main__":
 
-   
     #paramètres
-    chemin_base = os.getcwd() + "/simu_bact"
-
+    chemin_base = os.getcwd() + "/simu_spheres"
     if not os.path.exists(chemin_base):
         os.mkdir(chemin_base)
 
@@ -35,55 +31,37 @@ if __name__ == "__main__":
     x_size = 1024
     y_size = 1024
     z_size = 200
-    facteur_surechantillonnage = 1 #calcul intermediaire sur un plan (x_size x 4) x (y_size x 4)
 
     #Phi
     transmission_milieu = 1.0
-    transmission_bacterie = 1.0
+    transmission_sphere = 0.0
     index_milieu = 1.33
-    index_bactérie = 1.331
+    index_sphere = 1.35
 
     #Camera
-    pix_size = 7e-6
+    pix_size = 5.5e-6
     grossissement = 40
     vox_size_xy = pix_size / grossissement
     vox_size_z = 100e-6 / z_size
 
-    #liste bactéries
-    thickness=1e-6
-    length=3e-6
-    transmission=1.0
+    #liste sphere
+    radius = 0.8e-6
+    transmission = 0.0
+
+    positions_spheres = [
+        [512*vox_size_xy, 256*vox_size_xy, 0, radius],
+    ]
 
     #parametres source illumination
     moyenne = 1.0
-    ecart_type = 0.005
+    ecart_type = 0.01
     bruit_gaussien = np.abs(np.random.normal(moyenne, ecart_type, [x_size, y_size]))
+    #traitement_holo.affichage(bruit_gaussien)
+    # plt.hist(bruit_gaussien.flatten(), bins=200)
+    # plt.show()
     
     wavelenght = 660e-9
     lambda_milieu = wavelenght / index_milieu
-
-    shift_in_env = 0.0
-    shift_in_obj = 2.0 * cp.pi * vox_size_z * (index_bactérie - index_milieu) / wavelenght
-
-    angles = [0.0, 10.0, 20.0, 30.0, 40.0, 45.0, 50.0, 60.0, 70.0, 80.0, 90.0]
-
-
-    positions_bact = [
-        [100*vox_size_xy, 100*vox_size_xy, 50*vox_size_z, 0.0, 0.0],
-        [200*vox_size_xy, 200*vox_size_xy, 60*vox_size_z, 0.0, 10.0],
-        [300*vox_size_xy, 300*vox_size_xy, 70*vox_size_z, 0.0, 20.0],
-        [400*vox_size_xy, 400*vox_size_xy, 80*vox_size_z, 0.0, 30.0],
-        [500*vox_size_xy, 500*vox_size_xy, 90*vox_size_z, 0.0, 40.0],
-        [600*vox_size_xy, 600*vox_size_xy, 100*vox_size_z, 0.0, 50.0],
-        [700*vox_size_xy, 700*vox_size_xy, 110*vox_size_z, 0.0, 60.0],
-        [800*vox_size_xy, 800*vox_size_xy, 120*vox_size_z, 0.0, 70.0],
-        [900*vox_size_xy, 900*vox_size_xy, 130*vox_size_z, 0.0, 80.0],
-        [1000*vox_size_xy, 1000*vox_size_xy, 140*vox_size_z, 0.0, 90.0]
-    ]
-
-    # positions_bact = [
-    #     [512*vox_size_xy, 512*vox_size_xy, 100*vox_size_z, 45.0, 45.0]
-    # ]
 
     #Creation des repertoires d'enregistrement:
     now = datetime.datetime.now()
@@ -99,14 +77,17 @@ if __name__ == "__main__":
     volume_size = [x_size, y_size, z_size]
 
     #creation des bactéries
-    bacteries = []
-    for b in positions_bact:
-        bact = Bacterie(
-            pos_x=b[0], pos_y=b[1], pos_z=b[2], thickness=thickness, length=length, theta=b[3], phi=b[4]
-        )
-        bacteries.append(bact)
-    for b in bacteries:
-        b.to_file(chemin_positions + "/bact_positions.txt")
+    spheres = []
+    for s in positions_spheres:
+        sph = Sphere(
+            pos_x=s[0], pos_y=s[1], pos_z=s[2], radius=s[3]
+            )
+        spheres.append(sph)
+    for s in spheres:
+        s.to_file(chemin_positions + "/spheres_positions.txt")
+
+    shift_in_env = 0.0
+    shift_in_obj = 2.0 * cp.pi * vox_size_z * (index_sphere - index_milieu) / wavelenght
 
     #allocations
     h_holo = np.zeros(shape = (x_size, y_size), dtype = np.float32)
@@ -127,27 +108,26 @@ if __name__ == "__main__":
     #lecture fichier positions
 
     #insertion des bactéries dans le volume
-    for i in range (len(bacteries)):
-        insert_bact_in_mask_volume(mask_volume, bacteries[i], vox_size_xy, vox_size_z, facteur_surechantillonnage)
+    for i in range (len(spheres)):
+        insert_sphere_in_mask_volume(mask_volume, spheres[i], vox_size_xy, vox_size_z, upscale_factor=1)
         print("bact " + str(i) + " ok")
         
     #invertion de l'axe Z du volume (puisqu'à la localisation la propagation est inversée)
-    mask_volume =cp.flip(mask_volume, axis=2)
+    #mask_volume =cp.flip(mask_volume, axis=2)
 
-    # src = mlab.pipeline.scalar_field(mask_volume)
-    # mlab.pipeline.volume(src)
-    # mlab.show()
+    # #SIMU PROPAGATION
+    # for z in range(mask_volume.shape[2]):
+    #     maskplane = cp.asarray(mask_volume[:,:,z])
+    #     traitement_holo.affichage(maskplane)
 
-    #SIMU PROPAGATION
-    for i in range(mask_volume.shape[2]):
-            
-        field_plane = propagation.propag_angular_spectrum(field_plane, d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag,
-                                                lambda_milieu, 40.0, pix_size, x_size, y_size, vox_size_z, 0,0)
-            
-        maskplane = cp.asarray(mask_volume[:,:,i])
+    maskplane = cp.asarray(mask_volume[:,:,0])
+    traitement_holo.affichage(maskplane)
 
-        field_plane = phase_shift_through_plane(mask_plane=maskplane, plane_to_shift=field_plane,
-                                                    shift_in_env=shift_in_env, shift_in_obj=shift_in_obj)
+    field_plane = cross_through_plane(mask_plane=maskplane, plane_to_shift=field_plane,
+                                      shift_in_env=shift_in_env, shift_in_obj=shift_in_obj, transmission_in_obj=transmission_sphere)
+     
+    field_plane = propagation.propag_angular_spectrum(field_plane, d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag,
+                                                lambda_milieu, 40.0, pix_size, x_size, y_size, 100e-6, 0, 0)
             
     traitement_holo.save_image(traitement_holo.intensite(field_plane), chemin_holograms + "/holo_simu.bmp")
 
