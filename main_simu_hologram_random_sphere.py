@@ -28,7 +28,6 @@ if __name__ == "__main__":
 
     number_of_simu = 1000
     nb_spheres = 50
-    rayon_spheres = {min : 0.5e-6, max : 2.0e-6}
 
     #volume (taille holo & nombre de plans)
     #on prend la taille x et y 2x plus grand, pour cropper l'hologramme final afin de ne pas avoir l'effet "périodique" dû aux transformées de fourier
@@ -37,7 +36,7 @@ if __name__ == "__main__":
     z_size = 200
 
     #Paramètres objets
-    radius = 0.8e-6
+    rayon_spheres = {min : 0.5e-6, max : 2.0e-6}
     transmission_milieu = 1.0
     transmission_sphere = 0.0 #objet opaque
     index_milieu = 1.33

@@ -69,7 +69,10 @@ class Bacterie():
 
     def to_file(self, path_file):
 
-        txt = "{posx}\t{posy}\t{posz}\t{angle1}\t{angle2}\t\n".format(posx = self.pos_x, posy = self.pos_y, posz = self.pos_z, angle1 = self.theta, angle2 = self.phi)
+        txt = "{posx}\t{posy}\t{posz}\t{lengh}\t{thickness}\t{angle1}\t{angle2}\t\n".format(
+            posx = self.pos_x, posy = self.pos_y, posz = self.pos_z, lengh = self.length,
+            thickness = self.thickness, angle1 = self.theta, angle2 = self.phi
+            )
 
         with open(path_file, "a") as file:
             file.write(txt)
@@ -98,14 +101,15 @@ class Sphere():
         with open(path_file, "a") as file:
             file.write(txt)
 
-def gen_random_bacteria(number_of_bact: int, xyz_min_max: list, thickness: float, length: float):
+def gen_random_bacteria(number_of_bact: int, xyz_min_max: list, thickness_min_max: dict, length_min_max: dict):
 
         rng = np.random.default_rng()
 
         x_min, x_max, y_min, y_max, z_min, z_max = xyz_min_max
 
         list_bact = []
-
+        thickness = (thickness_min_max[max] - thickness_min_max[min]) * rng.random(number_of_bact) + thickness_min_max[min]
+        length = (length_min_max[max] - length_min_max[min]) * rng.random(number_of_bact) + length_min_max[min]
         x_positions = (x_max - x_min) * rng.random(number_of_bact) + x_min
         y_positions = (y_max - y_min) * rng.random(number_of_bact) + y_min
         z_positions = (z_max - z_min) * rng.random(number_of_bact) + z_min
@@ -115,7 +119,7 @@ def gen_random_bacteria(number_of_bact: int, xyz_min_max: list, thickness: float
         
         for i in range(number_of_bact):
 
-            list_bact.append(Bacterie(x_positions[i], y_positions[i], z_positions[i], thickness, length,
+            list_bact.append(Bacterie(x_positions[i], y_positions[i], z_positions[i], thickness[i], length[i],
                                 theta_angles[i], phi_angles[i]))
         
         return list_bact
