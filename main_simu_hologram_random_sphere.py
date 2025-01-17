@@ -28,6 +28,7 @@ if __name__ == "__main__":
 
     number_of_simu = 1000
     nb_spheres = 50
+    rayon_spheres = {min : 0.5e-6, max : 2.0e-6}
 
     #volume (taille holo & nombre de plans)
     #on prend la taille x et y 2x plus grand, pour cropper l'hologramme final afin de ne pas avoir l'effet "périodique" dû aux transformées de fourier
@@ -76,9 +77,9 @@ if __name__ == "__main__":
         volume_size = [x_size, y_size, z_size]
 
         #creation des bactéries
-        spheres = gen_random_sphere(nb_spheres,  volume_min_max, radius)
+        spheres = gen_random_sphere(nb_spheres,  volume_min_max, rayon_spheres)
 
-        with open(chemin_positions + "/spheres_positions.txt", "a") as file:
+        with open(chemin_positions + "/spheres_positions_"+ str(n) +".txt", "a") as file:
                 for s in spheres:
                     txt = "{posx}\t{posy}\t{posz}\t{radius}\t\n".format(posx = s.pos_x-512*vox_size_xy, posy = s.pos_y-512*vox_size_xy, posz = s.pos_z, radius = s.radius)
                     file.write(txt)
@@ -121,6 +122,6 @@ if __name__ == "__main__":
             field_plane = cross_through_plane(mask_plane=maskplane, plane_to_shift=field_plane,
                                                         shift_in_env=shift_in_env, shift_in_obj=shift_in_obj, transmission_in_obj=transmission_sphere)
                 
-        traitement_holo.save_image(traitement_holo.intensite(field_plane)[512:1536,512:1536], chemin_holograms + "/holo_simu.bmp")
+        traitement_holo.save_image(traitement_holo.intensite(field_plane)[512:1536,512:1536], chemin_holograms + "/holo_simu_"+ str(n) +".bmp")
 
         #traitement_holo.affichage(traitement_holo.intensite(field_plane)[512:1536,512:1536])

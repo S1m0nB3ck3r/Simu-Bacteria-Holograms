@@ -120,21 +120,21 @@ def gen_random_bacteria(number_of_bact: int, xyz_min_max: list, thickness: float
         
         return list_bact
 
-def gen_random_sphere(number_of_sphere: int, xyz_min_max: list, radius: float):
+def gen_random_sphere(number_of_sphere: int, xyz_min_max: list, radius_min_max: dict):
 
         rng = np.random.default_rng()
 
         x_min, x_max, y_min, y_max, z_min, z_max = xyz_min_max
 
         list_bact = []
-
+        radius = (radius_min_max[max] - radius_min_max[min]) * rng.random(number_of_sphere) + radius_min_max[min]
         x_positions = (x_max - x_min) * rng.random(number_of_sphere) + x_min
         y_positions = (y_max - y_min) * rng.random(number_of_sphere) + y_min
         z_positions = (z_max - z_min) * rng.random(number_of_sphere) + z_min
         
         for i in range(number_of_sphere):
 
-            list_bact.append(Sphere(x_positions[i], y_positions[i], z_positions[i], radius=radius))
+            list_bact.append(Sphere(x_positions[i], y_positions[i], z_positions[i], radius=radius[i]))
         
         return list_bact
 
