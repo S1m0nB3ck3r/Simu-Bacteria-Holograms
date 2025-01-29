@@ -282,9 +282,9 @@ def propagate_fresnell(input_wavefront: cp.ndarray, input_wavefront_two: cp.ndar
     ### méthode pas encore testée...un peu merdique
     n_threads = 1024
     n_blocks = math.ceil (width * height // n_threads)
-    propagate_fresnel_phase_based[n_blocks, n_threads](input_wavefront, input_wavefront_two, wavelength, magnification, pixel_size, width, height, propagation_distance)
+    propagate_fresnel_phase_type_one[n_blocks, n_threads](input_wavefront, input_wavefront_two, wavelength, magnification, pixel_size, width, height, propagation_distance)
     fft_wavefront = cp.fft.fftshift(cp.fft.fft2(input_wavefront_two))
-    propagate_fresnel_phase_based_two[n_blocks, n_threads](fft_wavefront, output_wavefront, wavelength, magnification, pixel_size, width, height, propagation_distance)
+    propagate_fresnel_phase_type_two[n_blocks, n_threads](fft_wavefront, output_wavefront, wavelength, magnification, pixel_size, width, height, propagation_distance)
 
 
 def propagate_rayleigh_sommerfeld(input_wavefront: cp.ndarray, kernel: cp.ndarray,
@@ -449,9 +449,9 @@ def volume_propagate_fresnell(input_wavefront: cp.ndarray, input_wavefront_temp:
 
     for i in range(number_propagation):
         distance = (i + 1) * propagation_delta
-        propagate_fresnel_phase_based[n_blocks, n_threads](input_wavefront, input_wavefront_temp, wavelength, magnification, pixel_size, width, height, distance)
+        propagate_fresnel_phase_type_one[n_blocks, n_threads](input_wavefront, input_wavefront_temp, wavelength, magnification, pixel_size, width, height, distance)
         fft_wavefront_temp = cp.fft.fftshift(cp.fft.fft2(input_wavefront_temp, norm='ortho'))
-        propagate_fresnel_phase_based_two[n_blocks, n_threads](fft_wavefront_temp, volume_wavefront[:,:,i], wavelength, magnification, pixel_size, width, height, distance)
+        propagate_fresnel_phase_type_two[n_blocks, n_threads](fft_wavefront_temp, volume_wavefront[:,:,i], wavelength, magnification, pixel_size, width, height, distance)
 
 
 @jit.rawkernel()
