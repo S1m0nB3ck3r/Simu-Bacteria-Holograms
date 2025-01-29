@@ -27,34 +27,12 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
+import math
 import numpy as np
 import cupy as cp
-from cupyx import jit
-import os
 
-import math
-import time
-import matplotlib.pyplot as plt
-import datetime
 
-import propagation
-import traitement_holo
-from PIL import Image  
-import PIL
-import argparse
-
-class Bacterie():
-
-    def __init__(self):
-        
-        self.pos_x = 0.0
-        self.pos_y = 0.0
-        self.pos_z = 0.0
-        self.thickness = 0.0
-        self.length = 0.0
-        self.theta = 0.0
-        self.phi = 0.0
-
+class Bacterie:
     def __init__(self, pos_x, pos_y, pos_z,
                  thickness, length,
                  theta, phi):
@@ -68,38 +46,24 @@ class Bacterie():
         self.phi = phi
 
     def to_file(self, path_file):
-
-        txt = "{posx}\t{posy}\t{posz}\t{lengh}\t{thickness}\t{angle1}\t{angle2}\t\n".format(
-            posx = self.pos_x, posy = self.pos_y, posz = self.pos_z, lengh = self.length,
-            thickness = self.thickness, angle1 = self.theta, angle2 = self.phi
-            )
-
+        data = ["bacterium", self.x, self.y, self.z, self.length, self.thickness, self.theta, self.phi]
         with open(path_file, "a") as file:
-            file.write(txt)
+            file.write("\t".join(map(str, data)) + "\n")
 
-class Sphere():
+    def coords(self): return np.array([self.x, self.y, self.z])
 
-    def __init__(self):
-        
-        self.pos_x = 0.0
-        self.pos_y = 0.0
-        self.pos_z = 0.0
-        self.radius = 0.0
 
-    def __init__(self, pos_x, pos_y, pos_z,
-                 radius):
-        
+class Sphere:
+    def __init__(self, pos_x, pos_y, pos_z, radius):
         self.pos_x = pos_x
         self.pos_y = pos_y
         self.pos_z = pos_z
         self.radius = radius
 
     def to_file(self, path_file):
-
-        txt = "{posx}\t{posy}\t{posz}\t{radius}\t\n".format(posx = self.pos_x, posy = self.pos_y, posz = self.pos_z, radius = self.radius)
-
+        data = ["sphere", self.x, self.y, self.z, self.radius]
         with open(path_file, "a") as file:
-            file.write(txt)
+            file.write("\t".join(map(str, data)) + "\n")
 
 def gen_random_bacteria(number_of_bact: int, xyz_min_max: list, thickness_min_max: dict, length_min_max: dict):
 
@@ -151,7 +115,7 @@ def phase_correction(cplx_plane, shift_plane):
 
     return module * cp.exp((0+1.j) * phase)
 
-def phase_shift_through_plane(mask_plane :cp, plane_to_shift: cp, shift_in_env: float, shift_in_obj: float):
+def phase_shift_through_plane(mask_plane: cp.ndarray, plane_to_shift: cp.ndarray, shift_in_env: float, shift_in_obj: float):
 
     # shift_plane = cp.full(fill_value=shift_in_env, dtype=cp.float32, shape=mask_plane.shape)
     shift_plane = mask_plane * shift_in_obj
@@ -169,7 +133,7 @@ def attenuation_and_phase_correction(d_cplx_plane, d_shift_plane, d_transmission
 
     return module* d_transmission_plane * cp.exp((0+1.j) * phase_plane)
 
-def cross_through_plane(mask_plane :cp, plane_to_shift: cp, shift_in_env: float, shift_in_obj: float, transmission_in_obj: float):
+def cross_through_plane(mask_plane: cp.ndarray, plane_to_shift: cp.array, shift_in_env: float, shift_in_obj: float, transmission_in_obj: float):
 
     shift_plane = cp.full(fill_value=shift_in_env, dtype=cp.float32, shape=mask_plane.shape)
     transmission_plane = cp.full(fill_value=1.0, dtype=cp.float32, shape=mask_plane.shape)
@@ -179,8 +143,7 @@ def cross_through_plane(mask_plane :cp, plane_to_shift: cp, shift_in_env: float,
 
     return attenuation_and_phase_correction(plane_to_shift, shift_plane, transmission_plane)
 
-def insert_bact_in_mask_volume(mask_volume: np, bact: Bacterie, vox_size_xy: float, vox_size_z: float, upscale_factor: int = 1):
-    
+def insert_bact_in_mask_volume(mask_volume: cp.ndarray, bact: Bacterie, vox_size_xy: float, vox_size_z: float, upscale_factor: int = 1):
     phi_rad = math.radians(bact.phi)
     theta_rad = math.radians(bact.theta)
     x_size_upscaled = mask_volume.shape[0]*upscale_factor

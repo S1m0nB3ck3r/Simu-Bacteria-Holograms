@@ -27,20 +27,9 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
 import math
-import numpy as np
-from numpy.fft import fft2 as np_fft2
-from numpy.fft import ifft2 as np_ifft2
-from numpy.fft import fftshift as np_fftshift
-from numpy.fft import ifftshift as np_ifftshift
-
 import cupy as cp
-from cupy.fft import rfft2, fft2, ifft2, fftshift, ifftshift, fftn, ifftn
 from cupyx import jit
-from cupyx.scipy import ndimage as cp_ndimage
-import typeHolo
 from traitement_holo import *
 
 
@@ -70,296 +59,399 @@ def d_calc_phase(d_plan_complex, d_phase, size_x, size_y):
 ################################               traitements des KERNELS               ####################################################
 #########################################################################################################################################
 
-
 @jit.rawkernel()
-def d_filter_FFT(d_plan_IN, d_plan_OUT, sizeX, sizeY, dMin, dMax):
-    #### Filtre passe bande   dMin>F>dMax avec dMin et dMax en pixel
-    ### d_plan_IN et d_plan_OUT des plans complex sur GPU de taille sizeX et sizeY 
+def apply_bandpass_filter(input_fft_plane: cp.ndarray, output_fft_plane: cp.ndarray, width: int, height: int, min_freq: float, max_freq: float) -> None:
+    """
+    Applies a bandpass filter to the input FFT plane, retaining frequencies between min_freq_px and max_freq_px.
+
+    Args:
+        input_fft_plane (cp.ndarray): Input FFT plane (complex data) on GPU, representing the frequency domain.
+        output_fft_plane (cp.ndarray): Output FFT plane (complex data) on GPU, where the filtered result will be stored.
+        width (int): Width of the FFT planes (in pixels).
+        height (int): Height of the FFT planes (in pixels).
+        min_freq_px (float): Minimum frequency (in pixels) to retain in the bandpass filter.
+        max_freq_px (float): Maximum frequency (in pixels) to retain in the bandpass filter.
+    """
 
     index = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    sizeXY = sizeX * sizeY
+    jj = cp.int32(index) // cp.int32(width)
+    ii = cp.int32(index) - cp.int32(jj * height)
 
-    jj = cp.int32(index) // cp.int32(sizeX)
-    ii = cp.int32(index) - cp.int32(jj * sizeY)
+    if (ii < width and jj < height):
+        center_x = width // 2
+        center_y = height // 2
 
-    if (ii < sizeX and jj < sizeY):
-        #calc distance
-        centreX = sizeX // 2
-        centreY = sizeY // 2
+        distance_from_center = cp.sqrt((center_x - ii)**2 + (center_y - jj)**2)
 
-        distanceCentre = cp.sqrt((centreX - ii)*(centreX - ii) + (centreY - jj)*(centreY - jj))
-
-        if ((distanceCentre > dMin) and (distanceCentre < dMax )):
-            d_plan_OUT[jj, ii] = d_plan_IN[jj, ii]
+        if ((distance_from_center > min_freq) and (distance_from_center < max_freq)):
+            output_fft_plane[jj, ii] = input_fft_plane[jj, ii]
         else:
-            d_plan_OUT[jj, ii] = 0.0 + 0.0j
-
-
-@jit.rawkernel()
-def d_spec_filter_FFT(d_plan_IN, d_plan_OUT, sizeX, sizeY, dMin, dMax):
-
-    index = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    sizeXY = sizeX * sizeY
-
-    jj = cp.int32(index) // cp.int32(sizeX)
-    ii = cp.int32(index) - cp.int32(jj * sizeY)
-
-    if (ii < sizeX and jj < sizeY):
-        #calc distance
-        centreX = sizeX // 2
-        centreY = sizeY // 2
-
-        distanceCentre = cp.sqrt((centreX - ii)*(centreX - ii) + (centreY - jj)*(centreY - jj))
-
-        if ((distanceCentre > dMin) and (distanceCentre < dMax )):
-            #d_plan_OUT[ii, jj] = d_plan_IN[ii, jj] * cp.log(1 + (distanceCentre - dMin)/ (dMax - dMin))
-            d_plan_OUT[jj, ii] = d_plan_IN[jj, ii]
-        else:
-            d_plan_OUT[jj, ii] = 0.0 + 0.0j
-
-
-#		spec_mask_filter_device[xy] = log(1 + (R - R_low));
-
+            output_fft_plane[jj, ii] = 0.0 + 0.0j
 
 #########################################################################################################################################
 ################################               calculs des KERNELS                  #####################################################
 #########################################################################################################################################
 
 @jit.rawkernel()
-def d_calc_kernel_propag_Rayleigh_Sommerfeld(d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance):
+def calculate_rayleigh_sommerfeld_propagation_kernel(kernel: cp.ndarray, wavelength: float, magnification: float, pixel_size: float, width: int, height: int, propagation_distance: float):
+    """
+    Calculates the Rayleigh-Sommerfeld propagation kernel for wave propagation.
+    H_propag = FFT-1 ( FFT(HOLO) * FFT(KERNEL_RAYLEIGH_SOMMERFELD)
+
+    Args:
+        kernel (cp.ndarray): Output kernel (complex data) on GPU, representing the propagation kernel.
+        wavelength (float): Wavelength of the light in the medium.
+        magnification (float): Magnification factor for the pixel size.
+        pixel_size (float): Physical size of a pixel in the input plane.
+        width (int): Width of the kernel (in pixels).
+        height (int): Height of the kernel (in pixels).
+        propagation_distance (float): Distance for wave propagation.
+    """
     
-    ### calcul du noyau de propagation d_KERNEL selon la méthode Rayleigh_Sommerfeld
-    ### H_propag = FFT-1 ( FFT(HOLO) * FFT(KERNEL_RAYLEIGH_SOMMERFELD)
-
     index = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    sizeXY = nb_pix_X * nb_pix_Y
+    jj = cp.int32(index) // cp.int32(width)
+    ii = cp.int32(index) - cp.int32(jj * height)
 
-    jj = cp.int32(index) // cp.int32(nb_pix_X)
-    ii = cp.int32(index) - cp.int32(jj * nb_pix_X)
+    if (ii < width and jj < height):
+        wave_number = cp.float32(2.0 * cp.pi / wavelength)
+        x = cp.float32(cp.int32(ii) - cp.int32(width // 2))
+        y = cp.float32(cp.int32(jj) - cp.int32(height // 2))
 
-    if (ii < nb_pix_X and jj < nb_pix_Y):
-
-        K = cp.float32(2.0 * cp.pi / lambda_milieu)
-        X = cp.float32( cp.int32(ii) - cp.int32(nb_pix_X // 2) )
-        Y = cp.float32( cp.int32(jj) - cp.int32(nb_pix_Y // 2) )
-        dpix = cp.float32(pixSize / magnification)
-        mod = cp.float32(distance) / cp.float32(lambda_milieu * (distance * distance + X * X *dpix * dpix + Y * Y * dpix*dpix))
-        phase = cp.float32(K * cp.sqrt(distance * distance + X * X * dpix * dpix + Y * Y * dpix * dpix))
-        d_KERNEL[jj, ii] = cp.complex64(mod * cp.exp(2.0j*cp.pi*phase))
-
+        scaled_pixel_size= cp.float32(pixel_size / magnification)
+        module_term = cp.float32(propagation_distance) / cp.float32(wavelength * (propagation_distance**2 + (x**2 + y**2) * scaled_pixel_size**2))
+        phase_term = cp.float32(wave_number * cp.sqrt(propagation_distance**2 + (x**2 + y**2) * scaled_pixel_size**2))
+        kernel[jj, ii] = cp.complex64(module_term * cp.exp(2.0j*cp.pi*phase_term))
     
 @jit.rawkernel()
-def d_calc_kernel_angular_spectrum_jit(d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance):
+def calculate_angular_spectrum_propagation_kernel(kernel: cp.ndarray, wavelength: float, magnification: float, pixel_size: float, width: int, height: int, propagation_distance: float):
+    """
+    Calculates the angular spectrum propagation kernel for wave propagation.
+    h_propag = FFT-1 ( FFT(HOLO) * KERNEL_ANGULAR_SPECTRUM ) 
 
-    ### calcul du plan de phase d_KERNEL du noyau de propagation du spectre angulaire
-    ###  H_propag = FFT-1 ( FFT(HOLO) * KERNEL_ANGULAR_SPECTRUM ) 
+    Args:
+        kernel (cp.ndarray): Output kernel (complex data) on GPU, representing the propagation kernel.
+        wavelength (float): Wavelength of the light in the medium.
+        magnification (float): Magnification factor for the pixel size.
+        pixel_size (float): Physical size of a pixel in the input plane.
+        width (int): Width of the kernel (in pixels).
+        height (int): Height of the kernel (in pixels).
+        propagation_distance (float): Distance for wave propagation.
+    """
 
     index = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    sizeXY = nb_pix_X * nb_pix_Y
+    jj = index // width
+    ii = index - jj * width
 
-    jj = index // nb_pix_X
-    ii = index - jj * nb_pix_X
-
-    if (ii < nb_pix_X and jj < nb_pix_Y):
-        du = magnification / (pixSize * cp.float32(nb_pix_X))
-        dv = magnification / (pixSize * cp.float32(nb_pix_Y))
-
-        offset_u = nb_pix_X//2
-        offset_v = nb_pix_Y//2
-
-        U = ( cp.int32(ii) - cp.int32(offset_u) )*du
-        V = ( cp.int32(jj) - cp.int32(offset_v) )*dv
+    if (ii < width and jj < height):
+        du = magnification / (pixel_size * cp.float32(width))
+        dv = magnification / (pixel_size * cp.float32(height))
+        offset_u = width // 2
+        offset_v = height // 2
+        u = (cp.int32(ii) - cp.int32(offset_u))*du
+        v = (cp.int32(jj) - cp.int32(offset_v))*dv
         
-        arg = 1.0 - cp.square(lambda_milieu * U) - cp.square(lambda_milieu *V )
-        
-        if(arg>0):
-            d_KERNEL[jj, ii] = cp.exp(2 * 1j * cp.pi * distance * cp.sqrt(arg) / lambda_milieu)
+        argument_term = 1.0 - cp.square(wavelength*u) - cp.square(wavelength*v)
+        if argument_term > 0:
+            kernel[jj, ii] = cp.exp(2 * 1j * cp.pi * propagation_distance * cp.sqrt(argument_term) / wavelength)
         else:
-            d_KERNEL[jj, ii] = 0.0+0j
-
-
-@jit.rawkernel()
-def d_propag_fresnel_phase1_jit(d_HOLO_IN, d_HOLO_OUT, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance):
-    index = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    jj = index // nb_pix_X
-    ii = index - jj * nb_pix_X
-
-    if (ii < nb_pix_X and jj < nb_pix_Y):
-        offsetX = nb_pix_X//2
-        offsetY = nb_pix_Y//2
-
-        X = ii - offsetX
-        Y = jj - offsetY
-
-        dp_X = magnification * lambda_milieu * distance / (nb_pix_X * pixSize)
-        dp_Y = magnification * lambda_milieu * distance / (nb_pix_Y * pixSize)
-
-        arg = (cp.pi * 1.0j / (lambda_milieu * distance))  * (X*X*dp_X*dp_X + Y*Y*dp_Y*dp_Y)
-        mod = 1.0j * cp.exp(2.0j*cp.pi*distance/lambda_milieu)/(lambda_milieu*distance)
-        d_HOLO_OUT[jj, ii]=mod * cp.exp(arg) * d_HOLO_IN[jj, ii]
+            kernel[jj, ii] = 0.0+0j
 
 @jit.rawkernel()
-def d_propag_fresnel_phase2_jit(d_HOLO_IN, d_HOLO_OUT, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance):
+def propagate_fresnel_phase_type_one(input_wavefront: cp.ndarray, output_wavefront: cp.ndarray, wavelength: float, magnification: float, pixel_size: float, width: int, height: int, propagation_distance: float):
+    """
+    Propagates a wavefront using the Fresnel diffraction method (phase-based approach).
+
+    Args:
+        input_wavefront (cp.ndarray): Input wavefront (complex data) on GPU.
+        output_wavefront (cp.ndarray): Output wavefront (complex data) on GPU, where the result is stored.
+        wavelength (float): Wavelength of the wave in the medium (in meters).
+        magnification (float): Magnification factor for the pixel size.
+        pixel_size (float): Physical size of a pixel in the input plane (in meters).
+        width (int): Width of the wavefront (in pixels).
+        height (int): Height of the wavefront (in pixels).
+        propagation_distance (float): Distance for wave propagation (in meters).
+    """
+
     index = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    jj = index // nb_pix_X
-    ii = index - jj * nb_pix_X
+    jj = index // width
+    ii = index - jj * width
 
-    if (ii < nb_pix_X and jj < nb_pix_Y):
-        offsetX = nb_pix_X//2
-        offsetY = nb_pix_Y//2
+    if (ii < width and jj < height):
+        offset_x = width//2
+        offset_y = height//2
+        x = ii - offset_x
+        y = jj - offset_y
 
-        X = ii - offsetX
-        Y = jj - offsetY
+        scaled_pixel_size_x = magnification * wavelength * propagation_distance / (width * pixel_size)
+        scaled_pixel_size_y = magnification * wavelength * propagation_distance / (height * pixel_size)
 
-        dp_X = pixSize / magnification
-        dp_Y = pixSize / magnification
+        argument_term = (cp.pi * 1.0j / (wavelength * propagation_distance)) * (x**2 * scaled_pixel_size_x**2 + y**2 * scaled_pixel_size_y**2)
+        module_term = 1.0j * cp.exp(2.0j*cp.pi*propagation_distance/wavelength) / (wavelength*propagation_distance)
+        output_wavefront[jj, ii] = module_term * cp.exp(argument_term) * input_wavefront[jj, ii]
 
-        arg = (cp.pi * 1.0j / (lambda_milieu * distance)) * (X*X*dp_X*dp_X + Y*Y*dp_Y*dp_Y)
-        d_HOLO_OUT[jj, ii] = cp.exp(arg) * d_HOLO_IN[jj, ii]
+@jit.rawkernel()
+def propagate_fresnel_phase_type_two(input_wavefront: cp.ndarray, output_wavefront: cp.ndarray, wavelength: float, magnification: float, pixel_size: float, width: int, height: int, propagation_distance: float):
+    """
+    Propagates a wavefront using the Fresnel diffraction method
+
+    Args:
+        input_wavefront (cp.ndarray): Input wavefront
+        output_wavefront (cp.ndarray): Output wavefront, where the result is stored
+        wavelength (float): Wavelength of the wave in the medium
+        magnification (float): Magnification factor for the pixel size
+        pixel_size (float): Physical size of a pixel in the input plane
+        width (int): Width of the wavefront (in pixels).
+        height (int): Height of the wavefront (in pixels).
+        propagation_distance (float): Distance for wave propagation (in meters).
+    """
+    index = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
+    jj = index // width
+    ii = index - jj * width
+
+    if (ii < width and jj < height):
+        offset_x = width // 2
+        offset_y = height // 2
+        x = ii - offset_x
+        y = jj - offset_y
+
+        scaled_pixel_size_x = pixel_size / magnification
+        scaled_pixel_size_y = pixel_size / magnification
+
+        argument_term = (cp.pi * 1.0j / (wavelength * propagation_distance)) * (x**2 * scaled_pixel_size_x**2 + y**2 * scaled_pixel_size_y**2)
+        output_wavefront[jj, ii] = cp.exp(argument_term) * input_wavefront[jj, ii]
 
 
 #########################################################################################################################################
 ################################               propagations                  ############################################################
 #########################################################################################################################################
 
-def propag_angular_spectrum(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_PROPAG,
-lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance, f_pix_min, f_pix_max):
+def propagate_angular_spectrum(input_wavefront: cp.ndarray, kernel: cp.ndarray, wavelength: float,
+                               magnification: float, pixel_size: float, width: int, height: int,
+                               propagation_distance: float, min_frequency: float, max_frequency: float):
+    """
+    Propagates a wavefront using the angular spectrum method (2-FFT approach).
+
+    Args:
+        input_wavefront (cp.ndarray): Input wavefront (complex data) on GPU.
+        kernel (cp.ndarray): Angular spectrum propagation kernel (complex data) on GPU.
+        wavelength (float): Wavelength of the wave in the medium (in meters).
+        magnification (float): Magnification factor for the pixel size.
+        pixel_size (float): Physical size of a pixel in the input plane (in meters).
+        width (int): Width of the wavefront (in pixels).
+        height (int): Height of the wavefront (in pixels).
+        propagation_distance (float): Distance for wave propagation (in meters).
+        min_frequency_px (float): Minimum frequency for bandpass filtering (in pixels).
+        max_frequency_px (float): Maximum frequency for bandpass filtering (in pixels).
+
+    Returns:
+        cp.ndarray: The propagated wavefront.
+    """
     
-    ### propagation de type spectre angulaire (méthode à 2 FFTs): propagation à utiliser pour les distance faibles
-    ### dx et dy ne dépendent pas de la distance de propagation
-    
-    nthread = 1024
-    nBlock = math.ceil(nb_pix_X * nb_pix_Y // nthread)
-    d_FFT_HOLO = fftshift(fft2(d_HOLO, norm = 'ortho'))
+    n_threads = 1024
+    n_blocks = math.ceil(width * height // n_threads)
+    fft_wavefront = cp.fft.fftshift(cp.fft.fft2(input_wavefront, norm='ortho'))
 
-    if ((f_pix_min != 0) and (f_pix_max != 0)):
-        d_filter_FFT[nBlock, nthread](d_FFT_HOLO, d_FFT_HOLO, nb_pix_X, nb_pix_Y, f_pix_min, f_pix_max)
+    # Apply a bandpass filter
+    if ((min_frequency != 0) and (max_frequency != 0)):
+        apply_bandpass_filter(fft_wavefront, fft_wavefront, width, height, min_frequency, max_frequency)
 
-    d_calc_kernel_angular_spectrum_jit[nBlock, nthread](d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
-    d_FFT_HOLO_PROPAG = d_FFT_HOLO * d_KERNEL
-    d_HOLO_PROPAG = ifft2(ifftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
-    return(d_HOLO_PROPAG)
+    calculate_angular_spectrum_propagation_kernel[n_blocks, n_threads](kernel, wavelength, magnification, pixel_size, width, height, propagation_distance)
+    fft_propagated_wavefront = fft_wavefront * kernel
+    # Compute the inverse FFT to obtain the propagated wavefront
+    output_wavefront = cp.fft.ifft2(cp.fft.ifftshift(fft_propagated_wavefront), norm='ortho')
+    return output_wavefront
 
+def propagate_fresnell(input_wavefront: cp.ndarray, input_wavefront_two: cp.ndarray, output_wavefront: cp.ndarray,
+                       wavelength: float, magnification: float, pixel_size: float, width: int, height: int,
+                       propagation_distance: float):
+    """
+    Fresnel-type propagation (single FFT method): propagation to be used for large distances.
 
-def propag_fresnell(d_HOLO, d_HOLO_2, d_FFT, d_HOLO_PROPAG,
-lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance):
-    
-    ### propagation de type Fresnell (méthode à 1 FFT): propagation à utiliser pour les distances grandes 
+    Args:
+        input_wavefront (cp.ndarray): Input wavefront
+        input_wavefront_two (cp.ndarray): Another input wavefront
+        output_wavefront (cp.ndarray): The propagated wavefront
+        wavelength (float): Wavelength of the wave in the medium (in meters).
+        magnification (float): Magnification factor for the pixel size.
+        pixel_size (float): Physical size of a pixel in the input plane (in meters).
+        width (int): Width of the wavefront (in pixels).
+        height (int): Height of the wavefront (in pixels).
+        propagation_distance (float): Distance for wave propagation (in meters).
+    """
     ### dx et dy dépendent de la distance de propagation
     ### méthode pas encore testée...un peu merdique
+    n_threads = 1024
+    n_blocks = math.ceil (width * height // n_threads)
+    propagate_fresnel_phase_based[n_blocks, n_threads](input_wavefront, input_wavefront_two, wavelength, magnification, pixel_size, width, height, propagation_distance)
+    fft_wavefront = cp.fft.fftshift(cp.fft.fft2(input_wavefront_two))
+    propagate_fresnel_phase_based_two[n_blocks, n_threads](fft_wavefront, output_wavefront, wavelength, magnification, pixel_size, width, height, propagation_distance)
 
-    nthread = 1024
-    nBlock = math.ceil(nb_pix_X * nb_pix_Y // nthread)
-    d_propag_fresnel_phase1_jit[nBlock, nthread](d_HOLO, d_HOLO_2, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
-    d_FFT = fftshift(fft2(d_HOLO_2))
-    d_propag_fresnel_phase2_jit[nBlock, nthread](d_FFT, d_HOLO_PROPAG, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
 
-def propag_Rayleigh_Sommerfeld(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_PROPAG,
-lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance):
-    
-    ### propagation de type Rayleigh Sommerfeld (méthode à 3 FFTs): propagation à utiliser pour les distances grandes 
+def propagate_rayleigh_sommerfeld(input_wavefront: cp.ndarray, kernel: cp.ndarray,
+                                  wavelength: float, magnification: float, pixel_size: float,
+                                  width: int, height: int, propagation_distance: float):
+    """
+    Rayleigh-Sommerfeld type propagation (3-FFT method): propagation to be used for large distances.
+
+    Args:
+        input_wavefront (cp.ndarray): Input wavefront
+        kernel (cp.ndarray): Angular spectrum propagation kernel (complex data) on GPU.
+        wavelength (float): Wavelength of the wave in the medium (in meters).
+        magnification (float): Magnification factor for the pixel size.
+        pixel_size (float): Physical size of a pixel in the input plane (in meters).
+        width (int): Width of the wavefront (in pixels).
+        height (int): Height of the wavefront (in pixels).
+        propagation_distance (float): Distance for wave propagation (in meters).
+
+    Returns:
+        cp.ndarray: The propagated wavefront.
+    """
     ### dx et dy ne dépendent pas de la distance de propagation
 
-    nthread = 1024
-    nBlock = math.ceil(nb_pix_X * nb_pix_Y // nthread)
-    d_FFT_HOLO = fftshift(fft2(d_HOLO, norm = 'ortho'))
-    d_calc_kernel_propag_Rayleigh_Sommerfeld[nBlock, nthread](d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
-    d_FFT_KERNEL = fftshift(fft2(d_KERNEL, norm = 'ortho'))
-    d_FFT_HOLO_PROPAG = d_FFT_HOLO * d_KERNEL
-    d_HOLO_PROPAG = fft2(fftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
+    n_threads = 1024
+    n_blocks = math.ceil(width * height // n_threads)
+    fft_wavefront = cp.fft.fftshift(cp.fft.fft2(input_wavefront, norm='ortho'))
+    calculate_rayleigh_sommerfeld_propagation_kernel[n_blocks, n_threads](kernel, wavelength, magnification, pixel_size, width, height, propagation_distance)
+    # fft_kernel = fftshift(fft2(kernel, norm = 'ortho'))
+    fft_propagated_wavefront = fft_wavefront * kernel
+    output_wavefront = cp.fft.fft2(cp.fft.fftshift(fft_propagated_wavefront), norm='ortho')
+    return output_wavefront
 
 #########################################################################################################################################
 ################################               Calculs volumes               ############################################################
 #########################################################################################################################################
 
-def volume_propag_angular_spectrum_complex(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_VOLUME_PROPAG,
-lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distancePropagIni, pasPropag, nbPropag, f_pix_min, f_pix_max):
+def volume_propagate_angular_spectrum_complex(input_wavefront: cp.ndarray, kernel: cp.ndarray, volume_wavefront: cp.ndarray,
+                                              wavelength: float, magnification: float, pixel_size: float, width: int, height: int,
+                                              initial_propagation_distance: float, propagation_delta: float, number_propagation: int,
+                                              min_frequency: float, max_frequency: float):
+    """
 
-    nthread = 1024
-    nBlock = math.ceil(nb_pix_X * nb_pix_Y // nthread)
+    Args:
+        input_wavefront (cp.ndarray): Input wavefront
+        kernel (cp.ndarray): Angular spectrum propagation kernel
+        volume_wavefront (cp.ndarray): Volume wavefront propagated
+        wavelength (float): Wavelength of the wave in the medium (in meters).
+        magnification (float): Magnification factor for the pixel size.
+        pixel_size (float): Physical size of a pixel in the input plane (in meters).
+        width (int): Width of the wavefront (in pixels).
+        height (int): Height of the wavefront (in pixels).
+        initial_propagation_distance (float): Initial distance for wave propagation (in meters).
+        propagation_delta (float): distance of seperation between wavefronts (in meters).
+        number_propagation (int): number of propagated wavefronts
+        min_frequency_px (float): Minimum frequency for bandpass filtering (in pixels).
+        max_frequency_px (float): Maximum frequency for bandpass filtering (in pixels).
+    """
 
-    d_FFT_HOLO = fftshift(fft2(d_HOLO, norm = 'ortho'))
+    n_threads = 1024
+    n_blocks = math.ceil(width * height // n_threads)
 
-    #print('somme avant fft:', cp.asnumpy(intensite(d_HOLO)).sum(), 'somme après FFT', cp.asnumpy(intensite(d_FFT_HOLO)).sum())
+    fft_wavefront = cp.fft.fftshift(cp.fft.fft2(input_wavefront, norm='ortho'))
 
-    if ((f_pix_min != 0) and (f_pix_max != 0)):
-        #d_spec_filter_FFT[nBlock, nthread](d_FFT_HOLO, d_FFT_HOLO, nb_pix_X, nb_pix_Y, f_pix_min, f_pix_max)
-        d_spec_filter_FFT[nBlock, nthread](d_FFT_HOLO, d_FFT_HOLO, nb_pix_X, nb_pix_Y, f_pix_min, f_pix_max)
+    if ((min_frequency != 0) and (max_frequency != 0)):
+        apply_bandpass_filter[n_blocks, n_threads](fft_wavefront, fft_wavefront, width, height, min_frequency, max_frequency)
 
-    for i in range(nbPropag):
-        distance = distancePropagIni + i * pasPropag
-        d_calc_kernel_angular_spectrum_jit[nBlock, nthread](d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
-        #analyse_array_cplx(d_KERNEL)
+    for i in range(number_propagation):
+        distance = initial_propagation_distance + i * propagation_delta
+        calculate_angular_spectrum_propagation_kernel[n_blocks, n_threads](kernel, wavelength, magnification, pixel_size, width, height, distance)
+        fft_propagated_wavefront = fft_wavefront * kernel
+        volume_wavefront[:,:,i] = cp.fft.fft2(cp.fft.fftshift(fft_propagated_wavefront), norm='ortho')
 
-        d_FFT_HOLO_PROPAG = d_FFT_HOLO * d_KERNEL
-        #analyse_array_cplx(d_FFT_HOLO_PROPAG)
-        d_HOLO_VOLUME_PROPAG[:,:,i] = fft2(fftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
-        #print("\n intensité distance ", distance, " :")
-        #analyse_array_cplx(d_HOLO_VOLUME_PROPAG[:,:,i])
+def volume_propagate_angular_spectrum_to_module(input_wavefront: cp.ndarray, kernel: cp.ndarray, volume_module_wavefront: cp.ndarray,
+                                                wavelength: float, magnification: float, pixel_size: float, width: int, height: int,
+                                                initial_propagation_distance: float, propagation_delta: float, number_propagation: int,
+                                                min_frequency: float, max_frequency: float):
+    """
 
+    Args:
+        input_wavefront (cp.ndarray): Input wavefront
+        kernel (cp.ndarray): Angular spectrum propagation kernel
+        volume_module_wavefront (cp.ndarray): Volume wavefront propagated
+        wavelength (float): Wavelength of the wave in the medium (in meters).
+        magnification (float): Magnification factor for the pixel size.
+        pixel_size (float): Physical size of a pixel in the input plane (in meters).
+        width (int): Width of the wavefront (in pixels).
+        height (int): Height of the wavefront (in pixels).
+        initial_propagation_distance (float): Initial distance for wave propagation (in meters).
+        propagation_delta (float): distance of seperation between wavefronts (in meters).
+        number_propagation (int): number of propagated wavefronts
+        min_frequency_px (float): Minimum frequency for bandpass filtering (in pixels).
+        max_frequency_px (float): Maximum frequency for bandpass filtering (in pixels).
+    """
+    n_threads = 1024
+    n_blocks = math.ceil(width * height // n_threads)
+    fft_wavefront = cp.fft.fftshift(cp.fft.fft2(input_wavefront, norm='ortho'))
 
-def volume_propag_angular_spectrum_to_module(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_VOLUME_PROPAG_MODULE,
-lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distancePropagIni, pasPropag, nbPropag, f_pix_min, f_pix_max):
+    if ((min_frequency != 0) and (max_frequency != 0)):
+        apply_bandpass_filter[n_blocks, n_threads](fft_wavefront, fft_wavefront, width, height, min_frequency, max_frequency)
 
-    nthread = 1024
-    nBlock = math.ceil(nb_pix_X * nb_pix_Y // nthread)
-
-    d_FFT_HOLO = fftshift(fft2(d_HOLO, norm = 'ortho'))
-
-    d_HOLO_PROPAG = cp.zeros(shape = (nb_pix_Y, nb_pix_X), dtype = cp.complex64)
-
-    #print('somme avant fft:', cp.asnumpy(intensite(d_HOLO)).sum(), 'somme après FFT', cp.asnumpy(intensite(d_FFT_HOLO)).sum())
-
-    if ((f_pix_min != 0) and (f_pix_max != 0)):
-        d_spec_filter_FFT[nBlock, nthread](d_FFT_HOLO, d_FFT_HOLO, nb_pix_X, nb_pix_Y, f_pix_min, f_pix_max)
-
-    for i in range(nbPropag):
-        distance = distancePropagIni + i * pasPropag
-        d_calc_kernel_angular_spectrum_jit[nBlock, nthread](d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
-        #analyse_array_cplx(d_KERNEL)
-        d_FFT_HOLO_PROPAG = d_FFT_HOLO * d_KERNEL
-        d_HOLO_PROPAG = fft2(fftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
-        #analyse_array_cplx(d_FFT_HOLO_PROPAG)
-        #d_HOLO_VOLUME_PROPAG_MODULE[i,:,:] = cp.flip(cp.flip(cp.sqrt(cp.real(d_HOLO_PROPAG)**2 + cp.imag(d_HOLO_PROPAG)**2), axis=1), axis=0)
-        d_HOLO_VOLUME_PROPAG_MODULE[i,:,:] = cp.flip(cp.flip(cp.sqrt(cp.real(d_HOLO_PROPAG)**2 + cp.imag(d_HOLO_PROPAG)**2), axis=1), axis=0)
-
-        #print("\n intensité distance ", distance, " :")
-        #analyse_array_cplx(d_HOLO_VOLUME_PROPAG[:,:,i])
+    for i in range(number_propagation):
+        distance = initial_propagation_distance + i *propagation_delta 
+        calculate_angular_spectrum_propagation_kernel[n_blocks, n_threads](kernel, wavelength, magnification, pixel_size, width, height, distance)
+        fft_propagated_wavefront = fft_wavefront * kernel
+        output_wavefront = cp.fft.fft2(cp.fft.fftshift(fft_propagated_wavefront), norm='ortho')
+        volume_module_wavefront[i,:,:] = cp.flip(cp.flip(cp.sqrt(cp.real(output_wavefront)**2 + cp.imag(output_wavefront)**2), axis=1), axis=0)
 
 def test_multiFFT(d_plan, nb_FFT):
     for i in range(nb_FFT):
-        d_fft_plan = fftshift(fft2(d_plan, norm = 'ortho'))
+        d_fft_plan = cp.fft.fftshift(cp.fft.fft2(d_plan, norm = 'ortho'))
         print('somme avant fft:', cp.asnumpy(intensite(d_plan)).sum(), 'somme après FFT', cp.asnumpy(intensite(d_fft_plan)).sum())
-        d_plan = fft2(fftshift(d_fft_plan), norm = 'ortho')
+        d_plan = cp.fft.fft2(cp.fft.fftshift(d_fft_plan), norm = 'ortho')
         print('somme avant fft:', cp.asnumpy(intensite(d_plan)).sum(), 'somme après FFT', cp.asnumpy(intensite(d_fft_plan)).sum())
 
-def volume_propag_Rayleigh_Sommerfeld(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_VOLUME_PROPAG,
-lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, pasPropag, nbPropag):
+def volume_propagate_rayleigh_sommerfeld(input_wavefront: cp.ndarray, kernel: cp.ndarray, volume_module_wavefront: cp.ndarray,
+                                         wavelength: float, magnification: float, pixel_size: float, width: int, height: int,
+                                         propagation_delta: float, number_propagation: int):
+    """
 
-    nthread = 1024
-    nBlock = math.ceil(nb_pix_X * nb_pix_Y // nthread)
+    Args:
+        input_wavefront (cp.ndarray): Input wavefront
+        kernel (cp.ndarray): Angular spectrum propagation kernel
+        volume_module_wavefront (cp.ndarray): Volume wavefront propagated
+        wavelength (float): Wavelength of the wave in the medium (in meters).
+        magnification (float): Magnification factor for the pixel size.
+        pixel_size (float): Physical size of a pixel in the input plane (in meters).
+        width (int): Width of the wavefront (in pixels).
+        height (int): Height of the wavefront (in pixels).
+        propagation_delta (float): distance of seperation between wavefronts (in meters).
+        number_propagation (int): number of propagated wavefronts
+    """
 
-    d_FFT_HOLO = fftshift(fft2(d_HOLO, norm = 'ortho'))
-    for i in range(nbPropag):
-        distance = (i + 1)* pasPropag
-        d_calc_kernel_propag_Rayleigh_Sommerfeld[nBlock, nthread](d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
-        #affichage(phase(d_KERNEL))
-        d_FFT_KERNEL = fftshift(fft2(d_KERNEL, norm = 'ortho'))
-        #affichage(phase(d_FFT_KERNEL))
-        d_FFT_HOLO_PROPAG = d_FFT_HOLO * d_KERNEL
-        d_HOLO_VOLUME_PROPAG[:,:,i] = fft2(fftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
+    n_threads = 1024
+    n_blocks = math.ceil(width * height // n_threads)
+    fft_wavefront = cp.fft.fftshift(cp.fft.fft2(input_wavefront, norm='ortho'))
 
-def volume_propag_fresnell(d_HOLO, d_Holo_temp, d_FFT, d_HOLO_VOLUME_PROPAG, 
-lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, pasPropag, nbPropag):
+    for i in range(number_propagation):
+        distance = (i + 1) * propagation_delta
+        calculate_rayleigh_sommerfeld_propagation_kernel[n_blocks, n_threads](kernel, wavelength, magnification, pixel_size, width, height, distance)
+        fft_propagated_wavefront = fft_wavefront * kernel
+        volume_module_wavefront[:,:,i] = cp.fft.fft2(cp.fft.fftshift(fft_propagated_wavefront), norm='ortho')
 
-    nthread = 1024
-    nBlock = math.ceil(nb_pix_X * nb_pix_Y // nthread)
+def volume_propagate_fresnell(input_wavefront: cp.ndarray, input_wavefront_temp: cp.ndarray, volume_wavefront: cp.ndarray,
+                              wavelength: float, magnification: float, pixel_size: float, width: int, height: int,
+                              propagation_delta: float, number_propagation: int):
+    """
 
-    for i in range(nbPropag):
-        distance = (i + 1)* pasPropag
-        d_propag_fresnel_phase1_jit[nBlock, nthread](d_HOLO, d_Holo_temp, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
-        d_FFT = fftshift(fft2(d_Holo_temp, norm = 'ortho'))
-        d_propag_fresnel_phase2_jit[nBlock, nthread](d_FFT, d_HOLO_VOLUME_PROPAG[:,:,i], lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
+    Args:
+        input_wavefront (cp.ndarray): Input wavefront
+        input_wavefront_tem (cp.ndarray): Another input wavefront
+        volume_wavefront (cp.ndarray): Volume wavefront propagated
+        wavelength (float): Wavelength of the wave in the medium (in meters).
+        magnification (float): Magnification factor for the pixel size.
+        pixel_size (float): Physical size of a pixel in the input plane (in meters).
+        width (int): Width of the wavefront (in pixels).
+        height (int): Height of the wavefront (in pixels).
+        propagation_delta (float): distance of seperation between wavefronts (in meters).
+        number_propagation (int): number of propagated wavefronts
+    """
+    n_threads = 1024
+    n_blocks = math.ceil(width * height // n_threads)
+
+    for i in range(number_propagation):
+        distance = (i + 1) * propagation_delta
+        propagate_fresnel_phase_based[n_blocks, n_threads](input_wavefront, input_wavefront_temp, wavelength, magnification, pixel_size, width, height, distance)
+        fft_wavefront_temp = cp.fft.fftshift(cp.fft.fft2(input_wavefront_temp, norm='ortho'))
+        propagate_fresnel_phase_based_two[n_blocks, n_threads](fft_wavefront_temp, volume_wavefront[:,:,i], wavelength, magnification, pixel_size, width, height, distance)
 
 
 @jit.rawkernel()
@@ -388,11 +480,11 @@ def clean_plan_cplx_device(d_plan_cplx, size_x, size_y, posX, posY, clean_radius
 
 def clean_plan_cplx(d_plan_cplx, size_x, size_y, posX, posY, clean_radius_pix, replace_value):
 
-    nthread = 1024
-    nBlock = math.ceil(size_x * size_y // nthread)
+    n_threads = 1024
+    n_blocks = math.ceil(size_x * size_y // n_threads)
 
     print(type(d_plan_cplx[0,0]))
 
-    clean_plan_cplx_device[nBlock, nthread](d_plan_cplx, size_x, size_y, posX, posY, clean_radius_pix, replace_value)
+    clean_plan_cplx_device[n_blocks, n_threads](d_plan_cplx, size_x, size_y, posX, posY, clean_radius_pix, replace_value)
 
 

@@ -32,10 +32,8 @@ import numpy as np
 import cupy as cp
 import time
 import math
-import cc3d
 from cupyx import jit
 import cupy as cp
-from cupy.fft import rfft2, fft2, ifft2, fftshift, ifftshift, fftn, ifftn
 
 
 def read_image(path_image, sizeX = 0, sizeY = 0):
@@ -98,23 +96,23 @@ def div_holo(A, B):
         C = 0.0
     return C
 
-def module(planComplex):
-    if isinstance(planComplex, cp.ndarray):
-        return(cp.sqrt(cp.square(cp.real(planComplex)) + cp.square(cp.imag(planComplex))))
+def module(complex_plane):
+    if isinstance(complex_plane, cp.ndarray):
+        return(cp.sqrt(cp.square(cp.real(complex_plane)) + cp.square(cp.imag(complex_plane))))
     else:
-        return(np.sqrt(np.square(np.real(planComplex)) + np.square(np.imag(planComplex))))
+        return(np.sqrt(np.square(np.real(complex_plane)) + np.square(np.imag(complex_plane))))
 
-def intensite(planComplex):
-    if isinstance(planComplex, cp.ndarray):
-        return(cp.square(cp.real(planComplex)) + cp.square(cp.imag(planComplex)))
+def intensite(complex_plane):
+    if isinstance(complex_plane, cp.ndarray):
+        return(cp.square(cp.real(complex_plane)) + cp.square(cp.imag(complex_plane)))
     else:
-        return(np.square(np.real(planComplex)) + np.square(np.imag(planComplex)))
+        return(np.square(np.real(complex_plane)) + np.square(np.imag(complex_plane)))
 
-def phase(planComplex):
-    if isinstance(planComplex, cp.ndarray):
-        return(cp.arctan(cp.imag(planComplex) /cp.real(planComplex)))
+def phase(complex_plane):
+    if isinstance(complex_plane, cp.ndarray):
+        return(cp.arctan(cp.imag(complex_plane) /cp.real(complex_plane)))
     else:
-        return(np.arctan(np.imag(planComplex) /np.real(planComplex)))
+        return(np.arctan(np.imag(complex_plane) /np.real(complex_plane)))
 
 def affiche_particule(x, y, z, boxSizeXY, boxSizeZ, volume):
 

@@ -113,8 +113,11 @@ if __name__ == "__main__":
         #SIMU PROPAGATION
         for i in range(mask_volume.shape[2]):
                 
-            field_plane = propagation.propag_angular_spectrum(field_plane, d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag,
-                                                    lambda_milieu, 40.0, pix_size, x_size, y_size, vox_size_z, 0, 0)
+            field_plane = propagation.propagate_angular_spectrum(
+                input_wavefront=field_plane, kernel=d_KERNEL,
+                wavelength=lambda_milieu, magnification=40.0,
+                pixel_size=pix_size, width=x_size, height=y_size,
+                propagation_distance=vox_size_z, min_frequency=0,max_frequency=0)
                 
             maskplane = cp.asarray(mask_volume[:,:,i])
 
