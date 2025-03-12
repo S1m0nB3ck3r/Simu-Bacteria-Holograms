@@ -28,23 +28,20 @@ dz = 1e-6
 np_plan_propag = 100
 volume_size = holo_size_xy * np_plan_propag
 
-
 #allocations
-h_holo = np.zeros(shape = (holo_size_xy, holo_size_xy), dtype = np.float32)
-d_holo = cp.zeros(shape = (holo_size_xy, holo_size_xy), dtype = cp.float32)
+h_HOLO = np.zeros(shape = (holo_size_xy, holo_size_xy), dtype = np.float32)
+d_HOLO = cp.zeros(shape = (holo_size_xy, holo_size_xy), dtype = cp.float32)
 d_FFT_HOLO = cp.zeros(shape = (holo_size_xy, holo_size_xy), dtype = cp.complex64)
 d_FFT_HOLO_PROPAG = cp.zeros(shape = (holo_size_xy, holo_size_xy), dtype = cp.complex64)
 d_holo_propag = cp.zeros(shape = (holo_size_xy, holo_size_xy), dtype = cp.float32)
 d_KERNEL = cp.zeros(shape = (holo_size_xy, holo_size_xy), dtype = cp.complex64)
 d_HOLO_VOLUME_PROPAG_MODULE = cp.full(shape = (holo_size_xy, holo_size_xy, np_plan_propag), fill_value=False, dtype=np.float32)
-d_bin_segmented_volume = cp.full(shape = volume_size, fill_value=False, dtype=np.bool8)
-
 
 #start reconstruction
 holo_path = "./holo_simu.bmp"
 
-h_holo = read_image(holo_path)
-d_HOLO = cp.array(h_holo)
+h_HOLO = read_image(holo_path)
+d_HOLO = cp.array(h_HOLO)
 
 volume_propag_angular_spectrum_to_module(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_VOLUME_PROPAG_MODULE,
 lambda_milieu, magnification, pix_size, holo_size_xy, holo_size_xy, distance_propag_ini, dz, np_plan_propag, 0.0, 0.0)

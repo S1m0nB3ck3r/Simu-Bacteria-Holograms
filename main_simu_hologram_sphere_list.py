@@ -119,7 +119,8 @@ if __name__ == "__main__":
     mask_volume =cp.flip(mask_volume, axis=2)
 
 
-        #SIMU PROPAGATION
+
+    #SIMU PROPAGATION
     for i in range(mask_volume.shape[2]):
             
         field_plane = propagation.propag_angular_spectrum(field_plane, d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag,
@@ -131,4 +132,6 @@ if __name__ == "__main__":
                                                     shift_in_env=shift_in_env, shift_in_obj=shift_in_obj, transmission_in_obj=transmission_sphere)
             
     traitement_holo.save_image(traitement_holo.intensite(field_plane)[512:1536,512:1536], chemin_holograms + "/holo_simu.bmp")
+    #np.save(chemin_holograms +"/volume_bin.npy", mask_volume.astype(bool))
+
     traitement_holo.affichage(traitement_holo.intensite(field_plane)[512:1536,512:1536])
