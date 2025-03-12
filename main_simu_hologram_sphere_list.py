@@ -26,6 +26,8 @@ if __name__ == "__main__":
     if not os.path.exists(chemin_base):
         os.mkdir(chemin_base)
 
+    print("chemin:", chemin_base)
+
     #volume (taille holo & nombre de plans)
     #on prend la taille x et y 2x plus grand, pour cropper l'hologramme final afin de ne pas avoir l'effet "périodique" dû aux transformées de fourier
     x_size = 2048
@@ -36,7 +38,7 @@ if __name__ == "__main__":
     transmission_milieu = 1.0
     transmission_sphere = 0.0 #opaque
     index_milieu = 1.33
-    index_sphere = 1.33
+    index_sphere = 1.5
 
     #Camera
     pix_size = 5.5e-6
@@ -48,14 +50,12 @@ if __name__ == "__main__":
     radius = 0.8e-6
 
     positions_spheres = [
-        [768*vox_size_xy, 768*vox_size_xy, 50*vox_size_z, radius],
         [1024*vox_size_xy, 1024*vox_size_xy, 100*vox_size_z, radius],
-        [1536*vox_size_xy, 1536*vox_size_xy, 150*vox_size_z, radius]
     ]
 
     #parametres source illumination
     moyenne = 1.0
-    ecart_type = 0.01
+    ecart_type = 0.0
     bruit_gaussien = np.abs(np.random.normal(moyenne, ecart_type, [x_size, y_size]))
     #traitement_holo.affichage(bruit_gaussien)
     # plt.hist(bruit_gaussien.flatten(), bins=200)
@@ -131,5 +131,4 @@ if __name__ == "__main__":
                                                     shift_in_env=shift_in_env, shift_in_obj=shift_in_obj, transmission_in_obj=transmission_sphere)
             
     traitement_holo.save_image(traitement_holo.intensite(field_plane)[512:1536,512:1536], chemin_holograms + "/holo_simu.bmp")
-
     traitement_holo.affichage(traitement_holo.intensite(field_plane)[512:1536,512:1536])

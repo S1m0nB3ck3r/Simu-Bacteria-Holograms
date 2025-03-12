@@ -319,12 +319,7 @@ lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distancePropagIni, pa
         #analyse_array_cplx(d_KERNEL)
         d_FFT_HOLO_PROPAG = d_FFT_HOLO * d_KERNEL
         d_HOLO_PROPAG = fft2(fftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
-        #analyse_array_cplx(d_FFT_HOLO_PROPAG)
-        #d_HOLO_VOLUME_PROPAG_MODULE[i,:,:] = cp.flip(cp.flip(cp.sqrt(cp.real(d_HOLO_PROPAG)**2 + cp.imag(d_HOLO_PROPAG)**2), axis=1), axis=0)
-        d_HOLO_VOLUME_PROPAG_MODULE[i,:,:] = cp.flip(cp.flip(cp.sqrt(cp.real(d_HOLO_PROPAG)**2 + cp.imag(d_HOLO_PROPAG)**2), axis=1), axis=0)
-
-        #print("\n intensité distance ", distance, " :")
-        #analyse_array_cplx(d_HOLO_VOLUME_PROPAG[:,:,i])
+        d_HOLO_VOLUME_PROPAG_MODULE[:,:,i] = cp.flip(cp.flip(cp.sqrt(cp.real(d_HOLO_PROPAG)**2 + cp.imag(d_HOLO_PROPAG)**2), axis=1), axis=0)
 
 def test_multiFFT(d_plan, nb_FFT):
     for i in range(nb_FFT):
