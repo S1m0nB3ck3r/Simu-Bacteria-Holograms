@@ -30,8 +30,8 @@ if __name__ == "__main__":
 
     #volume (taille holo & nombre de plans)
     #on prend la taille x et y 2x plus grand, pour cropper l'hologramme final afin de ne pas avoir l'effet "périodique" dû aux transformées de fourier
-    x_size = 2048
-    y_size = 2048
+    x_size = 512
+    y_size = 512
     z_size = 200
 
     #Paramètres objets
@@ -50,7 +50,7 @@ if __name__ == "__main__":
     radius = 0.8e-6
 
     positions_spheres = [
-        [1024*vox_size_xy, 1024*vox_size_xy, 100*vox_size_z, radius],
+        [256*vox_size_xy, 256*vox_size_xy, 100*vox_size_z, radius],
     ]
 
     #parametres source illumination
