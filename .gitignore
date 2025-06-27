@@ -1,0 +1,8 @@
+__pycache__/
+simu_bact_random/
+simu_bact_liste/
+simu_spheres/
+*.pyc
+*.pyo
+*.npy
+
