@@ -7,7 +7,28 @@ from simu_hologram import *
 import propagation as propag
 import cupy as cp
 import matplotlib.pyplot as plt
+import wandb
 from torchmetrics.classification import BinaryPrecision, BinaryRecall, BinaryF1Score
+
+def initialize_wandb(api_path, projet, entity):
+    if os.path.exists(api_path):
+        with open(api_path, 'r') as file:
+            api_key = file.read().strip()
+        if api_key:
+            try:
+                wandb.login(key=api_key)
+                wandb.init(project=projet, entity=entity)
+                print("Weights & Biases initialized successfully.")
+                return True
+            except Exception as e:
+                print(f"Failed to initialize Weights & Biases: {e}")
+                return False
+        else:
+            print("No API key found in the file.")
+            return False
+    else:
+        print("W&B API key file not found.")
+        return False
 
 class VolumeReconstructor:
     def __init__(self, parameters):
@@ -19,7 +40,6 @@ class VolumeReconstructor:
         self.magnification = parameters["magnification_cam"]
         self.pixSize = parameters["pix_size_cam"]
         self.dz = parameters["Z_step"]
-
         self.d_fft_holo = cp.zeros(shape=(self.nb_pix_X, self.nb_pix_Y), dtype=cp.complex64)
         self.d_fft_holo_propag = cp.zeros(shape=(self.nb_pix_X, self.nb_pix_Y), dtype=cp.complex64)
         self.d_KERNEL = cp.zeros(shape=(self.nb_pix_X, self.nb_pix_Y), dtype=cp.complex64)
@@ -33,7 +53,7 @@ class VolumeReconstructor:
             d_holo, self.d_fft_holo, self.d_KERNEL, self.d_fft_holo_propag, self.d_volume_module,
             self.lambdaMilieu, self.magnification, self.pixSize, self.nb_pix_X, self.nb_pix_Y,
             0.0, self.dz, self.nb_plan, 0, 0)
-        volume_tensor = torch.from_numpy(cp.asnumpy(self.d_volume_module)).unsqueeze(0)  # (1, X, Y, Z)
+        volume_tensor = torch.from_numpy(cp.asnumpy(self.d_volume_module)).unsqueeze(0)
         return volume_tensor
 
 class HologramToSegmentationDataset(Dataset):
@@ -43,11 +63,9 @@ class HologramToSegmentationDataset(Dataset):
         self.stride_XY = stride_XY
         self.patch_size_Z = patch_size_Z
         self.stride_Z = stride_Z
-
         _, _, parameters, _ = load_holo_data(holo_data_files[0])
         self.reconstructor = VolumeReconstructor(parameters)
         self.slice_index = []
-
         for file_idx, path in enumerate(holo_data_files):
             bool_volume, _, _, _ = load_holo_data(path)
             W, H, D = bool_volume.shape
@@ -64,18 +82,16 @@ class HologramToSegmentationDataset(Dataset):
         hologram_volume, hologram_image, parameters, bacteria_list = load_holo_data(self.holo_data_files[file_idx])
         volume_tensor = self.reconstructor.volume_reconstruction(hologram_image, parameters)
         bool_tensor = torch.from_numpy(hologram_volume).unsqueeze(0).to(torch.float32)
-
         px, py = self.patch_size_XY
         pz = self.patch_size_Z
-
         volume_patch = volume_tensor[:, x:x + px, y:y + py, z:z + pz]
-        bool_patch   = bool_tensor[:, x:x + px, y:y + py, z:z + pz]
-
+        bool_patch = bool_tensor[:, x:x + px, y:y + py, z:z + pz]
         return parameters, bacteria_list, volume_patch, bool_patch
 
 class UNet3D(nn.Module):
-    def __init__(self):
+    def __init__(self, dropout_prob=0.3):
         super(UNet3D, self).__init__()
+        self.dropout_prob = dropout_prob
         self.encoder1 = self.block(1, 16)
         self.encoder2 = self.block(16, 32)
         self.encoder3 = self.block(32, 64)
@@ -89,14 +105,17 @@ class UNet3D(nn.Module):
         self.final_conv = nn.Conv3d(16, 1, kernel_size=1)
 
     def block(self, in_channels, out_channels):
-        return nn.Sequential(
+        layers = [
             nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm3d(out_channels),
             nn.ReLU(inplace=True),
             nn.Conv3d(out_channels, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm3d(out_channels),
             nn.ReLU(inplace=True)
-        )
+        ]
+        if self.dropout_prob > 0:
+            layers.append(nn.Dropout3d(self.dropout_prob))
+        return nn.Sequential(*layers)
 
     def up_block(self, in_channels, out_channels):
         return nn.Sequential(
@@ -111,10 +130,10 @@ class UNet3D(nn.Module):
         e4 = self.encoder4(self.pool(e3))
         b = self.bottleneck(self.pool(e4))
         d4 = self.up4(b)
-        d3 = self.up3(d4)
-        d2 = self.up2(d3)
-        d1 = self.up1(d2)
-        return self.final_conv(d1)
+        d3 = self.up3(d4 + e4)
+        d2 = self.up2(d3 + e3)
+        d1 = self.up1(d2 + e2)
+        return self.final_conv(d1 + e1)
 
 def dice_coefficient(preds, targets, eps=1e-6):
     preds = (torch.sigmoid(preds) > 0.5).float()
@@ -129,23 +148,22 @@ def train(model, dataloader, optimizer, criterion, device):
     precision_metric = BinaryPrecision().to(device)
     recall_metric = BinaryRecall().to(device)
     f1_metric = BinaryF1Score().to(device)
-
     precision_metric.reset()
     recall_metric.reset()
     f1_metric.reset()
-
     total_loss = 0.0
     total_dice = 0.0
     n_batches = 0
 
-    for i, (_, _, input_volume, target) in enumerate(dataloader):
+    for i, (params, bacteria_list, input_volume, target) in enumerate(dataloader):
+        print(f"Processing batch {i}")
         input_volume, target = input_volume.to(device), target.to(device)
 
         out = model(input_volume)
         if out.shape != target.shape:
             out = torch.nn.functional.interpolate(out, size=target.shape[2:], mode='trilinear', align_corners=False)
-
         loss = criterion(out, target).mean()
+
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
@@ -154,71 +172,118 @@ def train(model, dataloader, optimizer, criterion, device):
         precision_metric.update(preds, target.int())
         recall_metric.update(preds, target.int())
         f1_metric.update(preds, target.int())
-
         dice = dice_coefficient(out, target)
         total_loss += loss.item()
         total_dice += dice
         n_batches += 1
-
         print(f"Batch {i}, Loss: {loss.item():.4f}, Dice: {dice:.4f}")
 
-    print(f"Epoch Summary: Loss: {total_loss/n_batches:.4f}, Dice: {total_dice/n_batches:.4f}, "
+    avg_loss = total_loss / n_batches
+    avg_dice = total_dice / n_batches
+    print(f"Epoch Summary: Loss: {avg_loss:.4f}, Dice: {avg_dice:.4f}, "
           f"Precision: {precision_metric.compute():.4f}, Recall: {recall_metric.compute():.4f}, "
           f"F1: {f1_metric.compute():.4f}")
+    return avg_loss, avg_dice
+
+def validate(model, dataloader, criterion, device):
+    model.eval()
+    total_loss = 0.0
+    total_dice = 0.0
+    n_batches = 0
+
+    with torch.no_grad():
+        for i, (params, bacteria_list, input_volume, target) in enumerate(dataloader):
+            input_volume, target = input_volume.to(device), target.to(device)
+            out = model(input_volume)
+            if out.shape != target.shape:
+                out = torch.nn.functional.interpolate(out, size=target.shape[2:], mode='trilinear', align_corners=False)
+            loss = criterion(out, target).mean()
+            dice = dice_coefficient(out, target)
+            total_loss += loss.item()
+            total_dice += dice
+            n_batches += 1
+
+    avg_loss = total_loss / n_batches
+    avg_dice = total_dice / n_batches
+    print(f"Validation Summary: Loss: {avg_loss:.4f}, Dice: {avg_dice:.4f}")
+    return avg_loss, avg_dice
 
 def save_model(model, path):
     torch.save(model.state_dict(), path)
-    print(f"Modèle sauvegardé dans {path}")
+    print(f"Model saved to {path}")
 
 def load_model(model, path, device):
     model.load_state_dict(torch.load(path, map_location=device))
     model.to(device)
     model.eval()
-    print(f"Modèle chargé depuis {path}")
+    print(f"Model loaded from {path}")
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
     base_path = r"C:\TRAVAIL\RepositoriesGithub\Simu-Bacteria-Holograms\simu_bact_random\2025_07_03_16_46_31\data_holograms"
     train_files = [os.path.join(base_path, "train", f) for f in os.listdir(os.path.join(base_path, "train")) if f.endswith(".npz")]
     test_files = [os.path.join(base_path, "test", f) for f in os.listdir(os.path.join(base_path, "test")) if f.endswith(".npz")]
+    model_path = r"C:\TRAVAIL\RepositoriesGithub\Simu-Bacteria-Holograms\simu_bact_random\model_unet3d.pth"
 
+    # Load parameters from the first training file
     _, _, parameters, _ = load_holo_data(train_files[0])
 
-    dataset = HologramToSegmentationDataset(train_files)
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+    # Initialize Weights & Biases
+    api_key_path = os.path.join(os.getcwd(), "wandb_api.txt")
+    wandb_initialized = initialize_wandb(api_key_path, projet="Bacteria 3D Segmentation", entity="university_of_lorraine")
+    # wandb_initialized = False  # Set to False for testing without W&B
 
-    model = UNet3D().to(device)
+    # Create datasets and dataloaders
+    train_dataset = HologramToSegmentationDataset(train_files)
+    test_dataset = HologramToSegmentationDataset(test_files)
+    train_dataloader = DataLoader(train_dataset, batch_size=4, shuffle=True, num_workers=0)
+    test_dataloader = DataLoader(test_dataset, batch_size=4, shuffle=False, num_workers=0)
+
+    # Initialize model, optimizer, and criterion
+    model = UNet3D(dropout_prob=0.3).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     criterion = nn.BCEWithLogitsLoss(reduction='none')
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, factor=0.1)
 
-    model_path = "model_unet3d.pth"
+    # Training loop
     load_existing = False
+    use_amp = True  # Enable mixed precision training
 
     if load_existing and os.path.exists(model_path):
         load_model(model, model_path, device)
     else:
         for epoch in range(10):
             print(f"Epoch {epoch+1}/10")
-            train(model, dataloader, optimizer, criterion, device)
+            train_loss, train_dice = train(model, train_dataloader, optimizer, criterion, device)
+            val_loss, val_dice = validate(model, test_dataloader, criterion, device)
+
+            # Log metrics to Weights & Biases if initialized
+            if wandb_initialized:
+                wandb.log({"Train Loss": train_loss, "Train Dice": train_dice,
+                           "Validation Loss": val_loss, "Validation Dice": val_dice})
+
+            # Step the scheduler
+            scheduler.step(val_loss)
+
         save_model(model, model_path)
 
+    # Close the Weights & Biases run if initialized
+    if wandb_initialized:
+        wandb.finish()
+
+    # Evaluation on test data
     model.eval()
     reconstructor = VolumeReconstructor(parameters)
-
     for i in range(min(5, len(test_files))):
-        print(f"\nInference sur hologramme {i}")
+        print(f"\nInference on hologram {i}")
         parameters_i, _, holo_i, bool_volume_np = load_holo_data(test_files[i])
-
         volume_tensor = reconstructor.volume_reconstruction(holo_i, parameters_i).to(device)
         target_tensor = torch.from_numpy(bool_volume_np).float().unsqueeze(0).to(device)
-
         X, Y, Z = volume_tensor.shape[1:]
         patch_x, patch_y = 128, 128
         stride_x, stride_y = 64, 64
         patch_z = 64
         stride_z = 32
-
         pred_accum = torch.zeros((1, X, Y, Z), device=device)
         weight_accum = torch.zeros_like(pred_accum)
 

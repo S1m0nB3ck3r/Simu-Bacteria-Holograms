@@ -2,7 +2,9 @@ __pycache__/
 simu_bact_random/
 simu_bact_liste/
 simu_spheres/
+biblio/
+wandb/
 *.pyc
 *.pyo
 *.npy
-
+wandb_api.txt
