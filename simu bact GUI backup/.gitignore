@@ -1,0 +1,8 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Fichiers de configuration temporaires (optionnel, décommentez si vous ne voulez pas versionner)
+# parameters_simu_bact.json

@@ -110,6 +110,8 @@ if __name__ == "__main__":
 
         data_file = os.path.join(chemin_data_holo, "data_" + str(n) + ".npz")
         holo_file = os.path.join(chemin_holograms, "holo_" + str(n) + ".bmp")
+        bin_tiff_stack_file = os.path.join(chemin_holograms, "bin_volume" + str(n) + ".tiff")
+        intensity_tiff_stack_file = os.path.join(chemin_holograms, "intensity_volume" + str(n) + ".tiff")
         positions_file = os.path.join(chemin_positions, "bact_" + str(n) + ".txt")
 
         #creation du champs d'illumination
@@ -188,7 +190,8 @@ if __name__ == "__main__":
             parameters, bacteria_list
             )
         
-        # plan = cp.asnumpy((cp_mask_volume != 0.0)).sum(axis=2)
+        save_volume_as_tiff(bin_tiff_stack_file, cp.asnumpy(cp_mask_volume != 0.0))
+        save_volume_as_tiff(intensity_tiff_stack_file, cp.asnumpy(traitement_holo.intensite(croped_field_plane)))
 
         # plt.imshow(plan, cmap="gray")
         # plt.title("Projection Z (masque)")

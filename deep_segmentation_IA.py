@@ -45,7 +45,7 @@ class VolumeReconstructor:
         self.d_KERNEL = cp.zeros(shape=(self.nb_pix_X, self.nb_pix_Y), dtype=cp.complex64)
         self.d_volume_module = cp.zeros(shape=(self.nb_pix_X, self.nb_pix_Y, self.nb_plan), dtype=cp.float32)
 
-    def volume_reconstruction(self, h_holo, parameters=None):
+    def volume_reconstruction(self, h_holo, parameters=None): 
         if parameters is not None and parameters != self.parameters:
             self.__init__(parameters)
         d_holo = cp.asarray(h_holo)
@@ -230,8 +230,8 @@ if __name__ == "__main__":
 
     # Initialize Weights & Biases
     api_key_path = os.path.join(os.getcwd(), "wandb_api.txt")
-    wandb_initialized = initialize_wandb(api_key_path, projet="Bacteria 3D Segmentation", entity="university_of_lorraine")
-    # wandb_initialized = False  # Set to False for testing without W&B
+    # wandb_initialized = initialize_wandb(api_key_path, projet="Bacteria 3D Segmentation", entity="university_of_lorraine")
+    wandb_initialized = False  # Set to False for testing without W&B
 
     # Create datasets and dataloaders
     train_dataset = HologramToSegmentationDataset(train_files)
@@ -246,7 +246,7 @@ if __name__ == "__main__":
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, factor=0.1)
 
     # Training loop
-    load_existing = False
+    load_existing = True
     use_amp = True  # Enable mixed precision training
 
     if load_existing and os.path.exists(model_path):
@@ -276,21 +276,34 @@ if __name__ == "__main__":
     reconstructor = VolumeReconstructor(parameters)
     for i in range(min(5, len(test_files))):
         print(f"\nInference on hologram {i}")
-        parameters_i, _, holo_i, bool_volume_np = load_holo_data(test_files[i])
+        bool_volume_np, holo_i, parameters_i, _ = load_holo_data(test_files[i])
         volume_tensor = reconstructor.volume_reconstruction(holo_i, parameters_i).to(device)
         target_tensor = torch.from_numpy(bool_volume_np).float().unsqueeze(0).to(device)
         X, Y, Z = volume_tensor.shape[1:]
-        patch_x, patch_y = 128, 128
-        stride_x, stride_y = 64, 64
-        patch_z = 64
-        stride_z = 32
+        patch_x, patch_y = 256, 256
+        stride_x, stride_y = 256, 256
+        patch_z = 128
+        stride_z = 128
         pred_accum = torch.zeros((1, X, Y, Z), device=device)
         weight_accum = torch.zeros_like(pred_accum)
 
-        with torch.no_grad():
+        nb_x = (X - patch_x) // stride_x + 1
+        nb_y = (Y - patch_y) // stride_y + 1
+        nb_z = (Z - patch_z) // stride_z + 1
+
+        i = j = k = 0
+
+        with torch.inference_mode():
             for y in range(0, Y - patch_y + 1, stride_y):
+                j+=1
+                i = 0
+                k = 0
                 for x in range(0, X - patch_x + 1, stride_x):
+                    i+=1
+                    k = 0
                     for z in range(0, Z - patch_z + 1, stride_z):
+                        k+=1    
+                        print(f"Processing patch at ({i}, {j}, {k}) sur ({nb_x}, {nb_y}, {nb_z})")
                         patch = volume_tensor[:, x:x+patch_x, y:y+patch_y, z:z+patch_z].unsqueeze(1)
                         out_patch = model(patch)
                         if out_patch.shape != patch.shape:

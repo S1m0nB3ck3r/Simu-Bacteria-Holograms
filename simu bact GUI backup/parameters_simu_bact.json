@@ -1,0 +1,22 @@
+{
+    "output_base_path": "C:/TRAVAIL/RepositoriesGithub/Simu-Bacteria-Holograms/test_simu_gui",
+    "number_of_bacteria": 200,
+    "holo_size_xy": 1024,
+    "border": 256,
+    "upscale_factor": 2,
+    "z_size": 200,
+    "transmission_milieu": 1.0,
+    "index_milieu": 1.33,
+    "index_bacterie": 1.335,
+    "longueur_min": 3e-06,
+    "longueur_max": 4e-06,
+    "epaisseur_min": 1e-06,
+    "epaisseur_max": 2e-06,
+    "pix_size": 5.5e-06,
+    "grossissement": 40,
+    "vox_size_z_total": 0.0001,
+    "wavelength": 6.6e-07,
+    "illumination_mean": 1.0,
+    "ecart_type_min": 0.01,
+    "ecart_type_max": 0.1
+}

@@ -30,6 +30,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 import numpy as np
 import cupy as cp
 from cupyx import jit
+import csv
 import os
 
 import math
@@ -39,7 +40,8 @@ import datetime
 
 import propagation
 import traitement_holo
-from PIL import Image  
+from PIL import Image
+import tifffile  
 import PIL
 import argparse
 
@@ -470,3 +472,19 @@ def load_holo_data(filepath_npz):
     ]
 
     return hologram_volume, hologram_image, parameters, bacteria_list
+
+def save_volume_as_tiff(filepath_tiff, hologram_volume: np.ndarray):
+    """
+    Sauvegarde le volume 3D booléen en TIFF multi-stack visualisable.
+    
+    Args:
+        filepath_tiff: Chemin du fichier TIFF (ex: "output/volume.tif")
+        hologram_volume: Volume 3D booléen (X, Y, Z)
+    """
+    # Conversion en uint8 pour la visualisation (0 ou 255)
+    volume_uint8 = (hologram_volume.astype(np.uint8) * 255)
+    
+    # Sauvegarde avec axe Z comme stack
+    tifffile.imwrite(filepath_tiff, volume_uint8, photometric='minisblack')
+    
+    print(f"Volume 3D sauvegardé : {filepath_tiff}")
