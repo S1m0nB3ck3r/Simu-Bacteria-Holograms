@@ -30,5 +30,6 @@
     "save_positions_csv": true,
     "propagation_step": 5e-07,
     "number_of_propagation": 200,
-    "volume_sensor_distance": 0.0
+    "volume_sensor_distance": 0.0,
+    "step_z": 5e-07
 }

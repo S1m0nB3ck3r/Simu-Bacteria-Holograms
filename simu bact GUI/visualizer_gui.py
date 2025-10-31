@@ -28,87 +28,193 @@ class VisualizerGUI:
         self.root = root
         self.root.title("Visualisateur Hologrammes")
         self.root.geometry("1400x800")
-        
+
         self.current_folder = None
         self.current_z = 0
         self.hologram = None
         self.bin_volume = None
         self.propagated_volume = None
         self.z_size = 0
-        
+
+        self.holo_choices = []
+        self.selected_holo = tk.StringVar()
         self.create_widgets()
-    
+
     def create_widgets(self):
         """Crée l'interface graphique"""
         # Frame principal
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
-        
+
         # Frame de sélection du dossier
         select_frame = ttk.Frame(main_frame)
         select_frame.pack(fill=tk.X, pady=10)
-        
+
         ttk.Label(select_frame, text="Dossier de résultats :", font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=5)
-        
+
         self.folder_entry = ttk.Entry(select_frame, width=60)
         self.folder_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        
+        self.folder_entry.bind('<FocusOut>', lambda e: self.list_holograms(self.folder_entry.get()))
+        self.folder_entry.bind('<Return>', lambda e: self.list_holograms(self.folder_entry.get()))
+        self.folder_entry.bind('<KeyRelease>', lambda e: self.list_holograms(self.folder_entry.get()))
         ttk.Button(select_frame, text="📁 Parcourir", command=self.browse_folder).pack(side=tk.LEFT, padx=5)
-        ttk.Button(select_frame, text="🔄 Charger", command=self.load_data).pack(side=tk.LEFT, padx=5)
-        
+        self.holo_combobox = ttk.Combobox(select_frame, textvariable=self.selected_holo, state="readonly", width=40)
+        self.holo_combobox.pack(side=tk.LEFT, padx=5)
+        ttk.Button(select_frame, text="🔄 Charger", command=self.load_selected_holo).pack(side=tk.LEFT, padx=5)
+
         # Frame pour les 3 images
         images_frame = ttk.Frame(main_frame)
         images_frame.pack(fill=tk.BOTH, expand=True, pady=10)
-        
+
         # Colonne 1 : Hologramme simulé
         col1 = ttk.Frame(images_frame)
         col1.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
         ttk.Label(col1, text="Hologramme Simulé", font=('Arial', 12, 'bold')).pack()
         self.holo_label = ttk.Label(col1, text="Aucune donnée chargée", foreground="gray")
         self.holo_label.pack(pady=5, expand=True)
-        
+
         # Colonne 2 : Volume binaire
         col2 = ttk.Frame(images_frame)
         col2.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
         ttk.Label(col2, text="Segmentation (Binaire)", font=('Arial', 12, 'bold')).pack()
         self.bin_label = ttk.Label(col2, text="Aucune donnée chargée", foreground="gray")
         self.bin_label.pack(pady=5, expand=True)
-        
+
         # Colonne 3 : Volume propagé avec surimpression
         col3 = ttk.Frame(images_frame)
         col3.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
         ttk.Label(col3, text="Volume Propagé + Segmentation", font=('Arial', 12, 'bold')).pack()
         self.propagated_label = ttk.Label(col3, text="Aucune donnée chargée", foreground="gray")
         self.propagated_label.pack(pady=5, expand=True)
-        
+
         # Frame pour le slider
         slider_frame = ttk.Frame(main_frame)
         slider_frame.pack(fill=tk.X, pady=10)
-        
+
         ttk.Label(slider_frame, text="Plan Z :").pack(side=tk.LEFT, padx=5)
-        
-        self.z_slider = ttk.Scale(slider_frame, from_=0, to=0, 
+
+        self.z_slider = ttk.Scale(slider_frame, from_=0, to=0,
                                   orient=tk.HORIZONTAL, command=self.on_slider_change, state='disabled')
         self.z_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        
+
         self.z_label = ttk.Label(slider_frame, text="0 / 0")
         self.z_label.pack(side=tk.LEFT, padx=5)
-        
+
         # Boutons de contrôle
         control_frame = ttk.Frame(main_frame)
         control_frame.pack(fill=tk.X, pady=5)
-        
+
         ttk.Button(control_frame, text="⏮ Début", command=lambda: self.set_z(0)).pack(side=tk.LEFT, padx=2)
         ttk.Button(control_frame, text="◀ Précédent", command=self.prev_z).pack(side=tk.LEFT, padx=2)
         ttk.Button(control_frame, text="Suivant ▶", command=self.next_z).pack(side=tk.LEFT, padx=2)
         ttk.Button(control_frame, text="Fin ⏭", command=lambda: self.set_z(self.z_size-1)).pack(side=tk.LEFT, padx=2)
     
     def browse_folder(self):
-        """Ouvre un dialogue de sélection de dossier"""
+        """Ouvre un dialogue de sélection de dossier et liste les hologrammes valides"""
         folder = filedialog.askdirectory(title="Sélectionner le dossier de résultats")
         if folder:
             self.folder_entry.delete(0, tk.END)
             self.folder_entry.insert(0, folder)
+            self.list_holograms(folder)
+            self.holo_combobox.update_idletasks()
+
+    def list_holograms(self, folder):
+        """Parcourt les sous-dossiers et liste ceux qui contiennent holo_*.bmp, bin_volume_*.tiff et intensity_volume_*.tiff"""
+        print(f"[DEBUG] list_holograms: folder={folder}")
+        self.holo_choices = []
+        if not os.path.isdir(folder):
+            print(f"[DEBUG] {folder} n'est pas un dossier valide.")
+            self.holo_combobox['values'] = []
+            self.selected_holo.set("")
+            return
+        # Nouvelle logique : on cherche les triplets indexés dans les trois dossiers
+        bmp_dir = os.path.join(folder, "simulated_hologram")
+        bin_dir = os.path.join(folder, "binary_volume")
+        prop_dir = os.path.join(folder, "hologram_volume")
+        print(f"[DEBUG] holo_*.bmp in {bmp_dir}")
+        print(f"[DEBUG] bin_volume_*.tiff in {bin_dir}")
+        print(f"[DEBUG] intensity_volume_*.tiff in {prop_dir}")
+        bmp_files = [f for f in os.listdir(bmp_dir) if f.startswith('holo_') and f.endswith('.bmp')] if os.path.isdir(bmp_dir) else []
+        bin_files = [f for f in os.listdir(bin_dir) if f.startswith('bin_volume_') and f.endswith('.tiff')] if os.path.isdir(bin_dir) else []
+        prop_files = [f for f in os.listdir(prop_dir) if f.startswith('intensity_volume_') and f.endswith('.tiff')] if os.path.isdir(prop_dir) else []
+        print(f"[DEBUG]   holo_*.bmp: {bmp_files}")
+        print(f"[DEBUG]   bin_volume_*.tiff: {bin_files}")
+        print(f"[DEBUG]   intensity_volume_*.tiff: {prop_files}")
+
+        # Extraire les index XXX
+        def extract_index(filename, prefix, suffix):
+            if filename.startswith(prefix) and filename.endswith(suffix):
+                return filename[len(prefix):-len(suffix)]
+            return None
+        bmp_idx = set(extract_index(f, 'holo_', '.bmp') for f in bmp_files)
+        bin_idx = set(extract_index(f, 'bin_volume_', '.tiff') for f in bin_files)
+        prop_idx = set(extract_index(f, 'intensity_volume_', '.tiff') for f in prop_files)
+        bmp_idx.discard(None)
+        bin_idx.discard(None)
+        prop_idx.discard(None)
+        # Intersection des index
+        valid_idx = sorted(bmp_idx & bin_idx & prop_idx)
+        print(f"[DEBUG] Index valides: {valid_idx}")
+        self.holo_choices = valid_idx
+        self.holo_combobox['values'] = self.holo_choices
+        self.holo_combobox.update_idletasks()
+        if self.holo_choices:
+            self.selected_holo.set(self.holo_choices[0])
+        else:
+            self.selected_holo.set("")
+        print(f"[DEBUG] holo_choices final: {self.holo_choices}")
+        self.holo_combobox['values'] = self.holo_choices
+        self.holo_combobox.update_idletasks()
+        if self.holo_choices:
+            self.selected_holo.set(self.holo_choices[0])
+        else:
+            self.selected_holo.set("")
+
+    def load_selected_holo(self):
+        """Charge les données du triplet index sélectionné"""
+        folder = self.folder_entry.get()
+        idx = self.selected_holo.get()
+        if not folder or not idx:
+            messagebox.showerror("Erreur", "Dossier ou index non sélectionné")
+            return
+        try:
+            simulated_hologram_dir = os.path.join(folder, "simulated_hologram")
+            binary_volume_dir = os.path.join(folder, "binary_volume")
+            hologram_volume_dir = os.path.join(folder, "hologram_volume")
+            holo_path = os.path.join(simulated_hologram_dir, f"holo_{idx}.bmp")
+            bin_path = os.path.join(binary_volume_dir, f"bin_volume_{idx}.tiff")
+            prop_path = os.path.join(hologram_volume_dir, f"intensity_volume_{idx}.tiff")
+            # Charge l'hologramme
+            if os.path.exists(holo_path):
+                self.hologram = np.array(Image.open(holo_path))
+            else:
+                self.hologram = None
+            # Charge le volume binaire
+            if os.path.exists(bin_path):
+                self.bin_volume = tifffile.imread(bin_path)
+            else:
+                self.bin_volume = None
+            # Charge le volume propagé
+            if os.path.exists(prop_path):
+                self.propagated_volume = tifffile.imread(prop_path)
+            else:
+                self.propagated_volume = None
+            # Détermine la taille Z
+            if self.bin_volume is not None:
+                self.z_size = self.bin_volume.shape[2] if len(self.bin_volume.shape) == 3 else self.bin_volume.shape[0]
+            elif self.propagated_volume is not None:
+                self.z_size = self.propagated_volume.shape[2] if len(self.propagated_volume.shape) == 3 else self.propagated_volume.shape[0]
+            else:
+                self.z_size = 0
+            if self.z_size > 0:
+                self.z_slider.config(to=self.z_size-1, state='normal')
+                self.current_z = 0
+                self.z_slider.set(0)
+                self.update_display()
+            else:
+                messagebox.showwarning("Attention", "Aucun volume trouvé dans le dossier")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur de chargement :\n{e}")
     
     def load_data(self):
         """Charge les données depuis le dossier sélectionné"""

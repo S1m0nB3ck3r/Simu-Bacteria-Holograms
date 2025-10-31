@@ -51,7 +51,7 @@ class SimulationGUI:
             "epaisseur_max": 2.0e-6,
             "pix_size": 5.5e-6,
             "grossissement": 40,
-            "vox_size_z_total": 100e-6,
+            "step_z": 0.5e-6,
             "wavelength": 660e-9,
             "illumination_mean": 1.0,
             "ecart_type_min": 0.01,
@@ -162,6 +162,8 @@ class SimulationGUI:
         row += 1
         self.add_entry(scrollable_frame, row, "Nombre de plans Z", "z_size", int)
         row += 1
+        self.add_entry(scrollable_frame, row, "Pas de simulation (m)", "step_z", float)
+        row += 1
         
         # Section Optique
         ttk.Separator(scrollable_frame, orient='horizontal').grid(row=row, column=0, columnspan=3, 
@@ -189,8 +191,6 @@ class SimulationGUI:
         self.add_entry(scrollable_frame, row, "Taille pixel caméra (m)", "pix_size", float)
         row += 1
         self.add_entry(scrollable_frame, row, "Grossissement", "grossissement", int)
-        row += 1
-        self.add_entry(scrollable_frame, row, "Taille voxel Z totale (m)", "vox_size_z_total", float)
         row += 1
         
         # Section Bactéries
