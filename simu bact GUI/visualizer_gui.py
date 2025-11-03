@@ -38,76 +38,87 @@ class VisualizerGUI:
 
         self.holo_choices = []
         self.selected_holo = tk.StringVar()
+        
+        self.is_playing = False
+        self.play_interval = 25  # millisecondes entre chaque frame
+        self.play_timer = None
+        
         self.create_widgets()
 
     def create_widgets(self):
         """Crée l'interface graphique"""
         # Frame principal
-        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame = ttk.Frame(self.root, padding="5")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Frame de sélection du dossier
+        # Frame de sélection du dossier et combobox (en haut)
         select_frame = ttk.Frame(main_frame)
-        select_frame.pack(fill=tk.X, pady=10)
+        select_frame.pack(fill=tk.X, pady=(0, 3))
 
-        ttk.Label(select_frame, text="Dossier de résultats :", font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=5)
+        ttk.Label(select_frame, text="Dossier de résultats :", font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=2)
 
-        self.folder_entry = ttk.Entry(select_frame, width=60)
-        self.folder_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        self.folder_entry = ttk.Entry(select_frame, width=50)
+        self.folder_entry.pack(side=tk.LEFT, padx=2, fill=tk.X, expand=True)
         self.folder_entry.bind('<FocusOut>', lambda e: self.list_holograms(self.folder_entry.get()))
         self.folder_entry.bind('<Return>', lambda e: self.list_holograms(self.folder_entry.get()))
         self.folder_entry.bind('<KeyRelease>', lambda e: self.list_holograms(self.folder_entry.get()))
-        ttk.Button(select_frame, text="📁 Parcourir", command=self.browse_folder).pack(side=tk.LEFT, padx=5)
-        self.holo_combobox = ttk.Combobox(select_frame, textvariable=self.selected_holo, state="readonly", width=40)
-        self.holo_combobox.pack(side=tk.LEFT, padx=5)
-        ttk.Button(select_frame, text="🔄 Charger", command=self.load_selected_holo).pack(side=tk.LEFT, padx=5)
+        ttk.Button(select_frame, text="📁 Parcourir", command=self.browse_folder).pack(side=tk.LEFT, padx=2)
+        self.holo_combobox = ttk.Combobox(select_frame, textvariable=self.selected_holo, state="readonly", width=15)
+        self.holo_combobox.pack(side=tk.LEFT, padx=2)
+        ttk.Button(select_frame, text="🔄 Charger", command=self.load_selected_holo).pack(side=tk.LEFT, padx=2)
 
-        # Frame pour les 3 images
+        # Frame pour les 3 images (centre, compact)
         images_frame = ttk.Frame(main_frame)
-        images_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        images_frame.pack(fill=tk.BOTH, expand=True, pady=0)
 
-        # Colonne 1 : Hologramme simulé
+        # Colonne 1 : Segmentation (Binaire)
         col1 = ttk.Frame(images_frame)
-        col1.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
-        ttk.Label(col1, text="Hologramme Simulé", font=('Arial', 12, 'bold')).pack()
-        self.holo_label = ttk.Label(col1, text="Aucune donnée chargée", foreground="gray")
-        self.holo_label.pack(pady=5, expand=True)
+        col1.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=2)
+        ttk.Label(col1, text="Segmentation (Binaire)", font=('Arial', 12, 'bold')).pack(pady=0)
+        self.bin_label = ttk.Label(col1, text="Aucune donnée chargée", foreground="gray")
+        self.bin_label.pack(pady=0, expand=True)
 
-        # Colonne 2 : Volume binaire
+        # Colonne 2 : Volume Propagé + Segmentation
         col2 = ttk.Frame(images_frame)
-        col2.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
-        ttk.Label(col2, text="Segmentation (Binaire)", font=('Arial', 12, 'bold')).pack()
-        self.bin_label = ttk.Label(col2, text="Aucune donnée chargée", foreground="gray")
-        self.bin_label.pack(pady=5, expand=True)
+        col2.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=2)
+        ttk.Label(col2, text="Volume Propagé + Segmentation", font=('Arial', 12, 'bold')).pack(pady=0)
+        self.propagated_label = ttk.Label(col2, text="Aucune donnée chargée", foreground="gray")
+        self.propagated_label.pack(pady=0, expand=True)
 
-        # Colonne 3 : Volume propagé avec surimpression
+        # Colonne 3 : Hologramme Simulé
         col3 = ttk.Frame(images_frame)
-        col3.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
-        ttk.Label(col3, text="Volume Propagé + Segmentation", font=('Arial', 12, 'bold')).pack()
-        self.propagated_label = ttk.Label(col3, text="Aucune donnée chargée", foreground="gray")
-        self.propagated_label.pack(pady=5, expand=True)
+        col3.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=2)
+        ttk.Label(col3, text="Hologramme Simulé", font=('Arial', 12, 'bold')).pack(pady=0)
+        self.holo_label = ttk.Label(col3, text="Aucune donnée chargée", foreground="gray")
+        self.holo_label.pack(pady=0, expand=True)
 
-        # Frame pour le slider
-        slider_frame = ttk.Frame(main_frame)
-        slider_frame.pack(fill=tk.X, pady=10)
+        # Frame pour le slider et les boutons (en bas, compact)
+        bottom_frame = ttk.Frame(main_frame)
+        bottom_frame.pack(fill=tk.X, pady=(3, 0))
 
-        ttk.Label(slider_frame, text="Plan Z :").pack(side=tk.LEFT, padx=5)
+        # Slider sur une ligne
+        slider_frame = ttk.Frame(bottom_frame)
+        slider_frame.pack(fill=tk.X, pady=0)
+
+        ttk.Label(slider_frame, text="Plan Z :").pack(side=tk.LEFT, padx=2)
 
         self.z_slider = ttk.Scale(slider_frame, from_=0, to=0,
                                   orient=tk.HORIZONTAL, command=self.on_slider_change, state='disabled')
-        self.z_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        self.z_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
         self.z_label = ttk.Label(slider_frame, text="0 / 0")
-        self.z_label.pack(side=tk.LEFT, padx=5)
+        self.z_label.pack(side=tk.LEFT, padx=2)
 
         # Boutons de contrôle
-        control_frame = ttk.Frame(main_frame)
-        control_frame.pack(fill=tk.X, pady=5)
+        control_frame = ttk.Frame(bottom_frame)
+        control_frame.pack(fill=tk.X, pady=(2, 0))
 
-        ttk.Button(control_frame, text="⏮ Début", command=lambda: self.set_z(0)).pack(side=tk.LEFT, padx=2)
-        ttk.Button(control_frame, text="◀ Précédent", command=self.prev_z).pack(side=tk.LEFT, padx=2)
-        ttk.Button(control_frame, text="Suivant ▶", command=self.next_z).pack(side=tk.LEFT, padx=2)
-        ttk.Button(control_frame, text="Fin ⏭", command=lambda: self.set_z(self.z_size-1)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(control_frame, text="⏮ Début", command=lambda: self.set_z(0)).pack(side=tk.LEFT, padx=1)
+        ttk.Button(control_frame, text="◀ Précédent", command=self.prev_z).pack(side=tk.LEFT, padx=1)
+        self.play_button = ttk.Button(control_frame, text="▶ Play", command=self.toggle_play)
+        self.play_button.pack(side=tk.LEFT, padx=1)
+        ttk.Button(control_frame, text="Suivant ▶", command=self.next_z).pack(side=tk.LEFT, padx=1)
+        ttk.Button(control_frame, text="Fin ⏭", command=lambda: self.set_z(self.z_size-1)).pack(side=tk.LEFT, padx=1)
     
     def browse_folder(self):
         """Ouvre un dialogue de sélection de dossier et liste les hologrammes valides"""
@@ -303,6 +314,44 @@ class VisualizerGUI:
     def next_z(self):
         """Plan suivant"""
         self.set_z(self.current_z + 1)
+    
+    def toggle_play(self):
+        """Active/désactive la lecture automatique"""
+        if self.is_playing:
+            self.stop_play()
+        else:
+            self.start_play()
+    
+    def start_play(self):
+        """Démarre la lecture automatique"""
+        if self.z_size == 0:
+            return
+        self.is_playing = True
+        self.play_button.config(text="⏸ Pause")
+        self.play_step()
+    
+    def stop_play(self):
+        """Arrête la lecture automatique"""
+        self.is_playing = False
+        self.play_button.config(text="▶ Play")
+        if self.play_timer:
+            self.root.after_cancel(self.play_timer)
+            self.play_timer = None
+    
+    def play_step(self):
+        """Avance d'un plan et programme le suivant"""
+        if not self.is_playing:
+            return
+        
+        # Avance au plan suivant, revient au début si on est à la fin
+        next_z = self.current_z + 1
+        if next_z >= self.z_size:
+            next_z = 0
+        
+        self.set_z(next_z)
+        
+        # Programme le prochain pas
+        self.play_timer = self.root.after(self.play_interval, self.play_step)
     
     def update_display(self):
         """Met à jour l'affichage des images"""
