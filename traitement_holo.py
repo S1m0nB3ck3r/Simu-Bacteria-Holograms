@@ -36,6 +36,8 @@ import cc3d
 from cupyx import jit
 import cupy as cp
 from cupy.fft import rfft2, fft2, ifft2, fftshift, ifftshift, fftn, ifftn
+import matplotlib.pyplot as plt
+
 
 
 def read_image(path_image, sizeX = 0, sizeY = 0):
@@ -72,22 +74,24 @@ def save_image(image_array, path_image):
     img.save(path_image)
 
 
-def affichage(plan):
-
+def display(plan, title="Image"):
+    """Fonction d'affichage robuste avec titre"""
+    print(f"   🖼️  Affichage: {title}")
+    
     if isinstance(plan, cp.ndarray):
         h_plan = cp.asnumpy(plan).astype(np.float32)
-        min = h_plan.min()
-        max = h_plan.max()
-        img = Image.fromarray((h_plan - min) * 255 / (max - min))
-
     else:
         h_plan = plan.astype(np.float32)
-        min = plan.min()
-        max = plan.max()
-        img = Image.fromarray((plan - min) * 255 / (max - min))
     
-    img.show(title = "plan")
-    img.close()
+    # Utilise matplotlib pour un affichage avec titre garanti
+    plt.figure(figsize=(8, 6))
+    plt.imshow(h_plan, cmap='gray')
+    plt.title(title, fontsize=14, fontweight='bold')
+    plt.colorbar(label='Intensité')
+    plt.axis('off')  # Cache les axes pour un affichage plus propre
+        
+    # Affiche dans une fenêtre séparée
+    plt.show(block=False)  # Non-bloquant pour permettre l'affichage de plusieurs images
 
 
 @cp.fuse()
@@ -348,6 +352,62 @@ def normalise_to_U8_volume(d_volume_IN):
     #d_volume_out = cp.zeros(dtype = cp.uint8, shape = d_volume_IN.shape)
 
     return(((d_volume_IN - min) * 255 / (max - min)).astype(cp.uint8))
+
+
+def projection_bool(d_bin_volume, axis):
+
+    sizeX, sizeY, sizeZ = d_bin_volume.shape
+    if axis == 0:
+        d_projection = cp.zeros(shape=(sizeY, sizeZ), dtype=cp.uint8)
+        nthread = 1024
+        nBlock = math.ceil(sizeY * sizeZ // nthread)
+    elif axis == 1:
+        d_projection = cp.zeros(shape=(sizeX, sizeZ), dtype=cp.uint8)
+        nthread = 1024
+        nBlock = math.ceil(sizeX * sizeZ // nthread)
+    elif axis == 2:
+        d_projection = cp.zeros(shape=(sizeX, sizeY), dtype=cp.uint8)
+        nthread = 1024
+        nBlock = math.ceil(sizeX * sizeY // nthread)
+
+    d_projection_bool[nBlock, nthread](d_bin_volume, d_projection, sizeX, sizeY, sizeZ, axis)
+
+    return d_projection
+
+@jit.rawkernel()
+def d_projection_bool(d_bin_volume, d_projection, sizeX, sizeY, sizeZ, axis):
+
+    index = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
+
+    if axis == 0:
+        jj = int(index // sizeZ)
+        kk = int(index - jj * sizeZ)
+        if (jj < sizeY and kk < sizeZ):
+            val = 0
+            for ii in range(sizeX):
+                if d_bin_volume[ii, jj, kk]:
+                    val = 1
+            d_projection[jj, kk] = val
+
+    elif axis == 1:
+        ii = int(index // sizeZ)
+        kk = int(index - ii * sizeZ)
+        if (ii < sizeX and kk < sizeZ):
+            val = 0
+            for jj in range(sizeY):
+                if d_bin_volume[ii, jj, kk]:
+                    val = 1
+            d_projection[ii, kk] = val
+
+    elif axis == 2:
+        ii = int(index // sizeY)
+        jj = int(index - ii * sizeY)
+        if (ii < sizeX and jj < sizeY):
+            val = 0
+            for kk in range(sizeZ):
+                if d_bin_volume[ii, jj, kk]:
+                    val = 1
+            d_projection[ii, jj] = val
 
 
 

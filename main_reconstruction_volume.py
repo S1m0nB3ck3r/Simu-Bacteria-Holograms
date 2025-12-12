@@ -40,7 +40,7 @@ d_HOLO_VOLUME_PROPAG_CPLX = cp.full(shape = (holo_size_xy, holo_size_xy, np_plan
 
 
 #start reconstruction
-holo_path = "./holo_simu.bmp"
+holo_path = "C:\\Users\\becker14\\Documents\\test_SIMU_GUI\\2025_12_12_09_39_30\\2025_12_12_09_40_16\\simulated_hologram\\holo_0.bmp"
 
 h_HOLO = read_image(holo_path)
 d_HOLO = cp.array(h_HOLO)

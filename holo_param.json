@@ -31,6 +31,5 @@
     "propagation_step": 5e-07,
     "number_of_propagation": 200,
     "volume_sensor_distance": 0.0,
-    "step_z": 5e-07,
-    "distance_volume_camera": 1e-05
+    "step_z": 5e-07
 }

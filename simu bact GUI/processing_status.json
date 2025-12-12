@@ -2,6 +2,7 @@
   "step": 11,
   "message": "Simulation termin\u00e9e avec succ\u00e8s !",
   "progress": 100,
-  "timestamp": "2025-10-31T18:48:18.868615",
-  "error": null
+  "timestamp": "2025-12-12T15:37:04.187588",
+  "error": null,
+  "stopped": false
 }

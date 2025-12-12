@@ -21,11 +21,20 @@ import numpy as np
 import cupy as cp
 import datetime
 import traceback
+import shutil
 from PIL import Image
 
 # Ajoute le répertoire parent au path pour importer les modules
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent_dir)
+
+# Configuration de l'encodage pour éviter les erreurs sur Windows
+if sys.platform.startswith('win'):
+    try:
+        # Essaie de configurer UTF-8 pour la console Windows
+        os.system('chcp 65001 > nul')
+    except:
+        pass  # Ignore les erreurs si chcp n'est pas disponible
 
 from simu_hologram import (
     gen_random_bacteria, GPU_insert_bact_in_mask_volume,
@@ -60,20 +69,48 @@ def display_image(array_2d, normalize=True):
     img.show()
 
 
-def update_status(status_file, step, message, progress=0, error=None):
+def update_status(status_file, step, message, progress=0, error=None, stopped=False):
     """Met à jour le fichier de statut pour communication avec le GUI"""
     status = {
         'step': step,
         'message': message,
         'progress': progress,
         'timestamp': datetime.datetime.now().isoformat(),
-        'error': error
+        'error': error,
+        'stopped': stopped
     }
     try:
         with open(status_file, 'w') as f:
             json.dump(status, f, indent=2)
     except Exception:
         pass  # Ignore les erreurs d'écriture du statut
+
+
+def check_stop_signal():
+    """Vérifie si un signal d'arrêt a été envoyé"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    stop_file = os.path.join(script_dir, "processing_stop.json")
+    
+    if os.path.exists(stop_file):
+        try:
+            with open(stop_file, 'r') as f:
+                stop_data = json.load(f)
+            return stop_data.get("stop_requested", False)
+        except Exception:
+            return False
+    return False
+
+
+def cleanup_stop_signal():
+    """Nettoie le fichier signal d'arrêt"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    stop_file = os.path.join(script_dir, "processing_stop.json")
+    
+    if os.path.exists(stop_file):
+        try:
+            os.remove(stop_file)
+        except Exception:
+            pass
 
 
 def load_parameters():
@@ -91,7 +128,7 @@ def load_parameters():
 
 
 def create_output_directories(base_path):
-    """Crée les répertoires de sortie avec timestamp"""
+    """Crée les répertoires de sortie avec timestamp et copie le fichier de paramètres"""
     now = datetime.datetime.now()
     formatted_date_time = now.strftime("%Y_%m_%d_%H_%M_%S")
     print(f"Date et heure actuelles : {formatted_date_time}")
@@ -106,6 +143,20 @@ def create_output_directories(base_path):
     os.makedirs(binary_volume_dir, exist_ok=True)
     os.makedirs(hologram_volume_dir, exist_ok=True)
     os.makedirs(object_positions_dir, exist_ok=True)
+    
+    # Copie du fichier de paramètres dans le répertoire de sortie
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    params_source = os.path.join(script_dir, "parameters_simu_bact.json")
+    params_dest = os.path.join(output_dir, "parameters_simu_bact.json")
+    
+    try:
+        if os.path.exists(params_source):
+            shutil.copy2(params_source, params_dest)
+            print(f"Fichier de paramètres copié vers : {params_dest}")
+        else:
+            print(f"Attention : Fichier de paramètres non trouvé à {params_source}")
+    except Exception as e:
+        print(f"Erreur lors de la copie du fichier de paramètres : {e}")
     
     return {
         'base': output_dir,
@@ -149,7 +200,11 @@ def generate_hologram(params, iteration, dirs, status_file=None):
     
     pix_size = params['pix_size']
     grossissement = params['grossissement']
-    vox_size_z_total = params['vox_size_z_total']
+    distance_volume_camera = params.get('distance_volume_camera', 0.01)  # Distance volume-caméra (défaut: 1cm)
+    step_z = params.get('step_z', 0.5e-6)  # Pas Z (défaut: 0.5 µm)
+    
+    # Calcul de vox_size_z_total à partir de step_z et z_size
+    vox_size_z_total = step_z * z_size
     
     wavelength = params['wavelength']
     illumination_mean = params['illumination_mean']
@@ -337,6 +392,18 @@ def generate_hologram(params, iteration, dirs, status_file=None):
             shift_in_env=shift_in_env,
             shift_in_obj=shift_in_obj
         )
+
+    # Propagation finale jusqu'au plan hologramme
+    print("  Propagation finale jusqu'au plan hologramme...")
+    
+    # Propagation avec la distance volume-caméra
+    if distance_volume_camera > 0:
+        print(f"    Distance volume-caméra : {distance_volume_camera*1000:.1f} mm")
+        cp_field_plane = propagation.propag_angular_spectrum(
+            cp_field_plane, d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag,
+            lambda_milieu, float(grossissement), pix_size, 
+            holo_size_xy_w_b, holo_size_xy_w_b, distance_volume_camera, 0, 0
+        )
             
     # Recadrage du champ final pour l'hologramme 2D
     croped_field_plane = cp_field_plane[border:border+holo_size_xy, border:border+holo_size_xy]
@@ -459,6 +526,14 @@ def main():
         # Génération des hologrammes
         all_saved_files = []
         for i in range(number_of_holograms):
+            # Vérification du signal d'arrêt entre chaque hologramme
+            if check_stop_signal():
+                print(f"\nArret demande par l'utilisateur apres {i} hologramme(s)")
+                update_status(status_file, i, "Simulation interrompue par l'utilisateur", 
+                            int((i / number_of_holograms) * 100), stopped=True)
+                cleanup_stop_signal()
+                return
+            
             # Calcul de la progression globale
             overall_progress = int((i / number_of_holograms) * 100)
             update_status(status_file, i+1, f"Génération hologramme {i+1}/{number_of_holograms}...", overall_progress)
@@ -476,6 +551,9 @@ def main():
         with open(result_file, 'w') as f:
             json.dump(result, f, indent=2)
         
+        # Nettoyage du signal d'arrêt
+        cleanup_stop_signal()
+        
         update_status(status_file, number_of_holograms+1, "Simulation terminée avec succès !", 100)
         
         print(f"\n{'='*80}")
@@ -490,6 +568,10 @@ def main():
         error_msg = f"{type(e).__name__}: {str(e)}"
         print(f"\n❌ ERREUR : {error_msg}", file=sys.stderr)
         traceback.print_exc()
+        
+        # Nettoyage du signal d'arrêt en cas d'erreur aussi
+        cleanup_stop_signal()
+        
         update_status(status_file, -1, "Erreur lors de la simulation", 0, error_msg)
         return 1
 

@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 import sys
 
 class SimulationGUI:
@@ -51,6 +52,7 @@ class SimulationGUI:
             "epaisseur_max": 2.0e-6,
             "pix_size": 5.5e-6,
             "grossissement": 40,
+            "distance_volume_camera": 0.01,  # Distance volume-caméra en mètres (1 cm par défaut)
             "step_z": 0.5e-6,
             "wavelength": 660e-9,
             "illumination_mean": 1.0,
@@ -73,6 +75,10 @@ class SimulationGUI:
         self.status_check_timer = None
         self.status_file = os.path.join(script_dir, "processing_status.json")
         self.result_file = os.path.join(script_dir, "processing_result.json")
+        self.stop_file = os.path.join(script_dir, "processing_stop.json")
+        
+        # Gestion de la fermeture de la fenêtre
+        self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
         
     def load_or_create_config(self):
         """Charge la configuration existante ou crée une nouvelle"""
@@ -191,6 +197,8 @@ class SimulationGUI:
         self.add_entry(scrollable_frame, row, "Taille pixel caméra (m)", "pix_size", float)
         row += 1
         self.add_entry(scrollable_frame, row, "Grossissement", "grossissement", int)
+        row += 1
+        self.add_entry(scrollable_frame, row, "Distance volume-caméra (m)", "distance_volume_camera", float)
         row += 1
         
         # Section Bactéries
@@ -354,12 +362,13 @@ class SimulationGUI:
         """Lance la simulation"""
         self.save_config()
         
-        # Nettoyage du fichier de statut
-        if os.path.exists(self.status_file):
-            try:
-                os.remove(self.status_file)
-            except Exception:
-                pass
+        # Nettoyage des fichiers de statut et d'arrêt
+        for file_path in [self.status_file, self.stop_file]:
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
         
         # Lance le traitement dans un thread
         self.processing = True
@@ -390,6 +399,12 @@ class SimulationGUI:
                 
                 self.status_label.config(text=f"⏳ {message}")
                 self.progress_bar['value'] = progress
+                
+                # Vérifie si le traitement a été arrêté côté processeur
+                if status.get('stopped', False):
+                    self.on_processing_complete(success=False, error="Simulation interrompue par l'utilisateur")
+                    return
+                    
         except Exception:
             pass  # Ignore les erreurs de lecture
         
@@ -453,9 +468,50 @@ class SimulationGUI:
     
     def stop_processing(self):
         """Arrête le traitement en cours"""
-        messagebox.showinfo("Information", 
-                          "L'arrêt du traitement n'est pas encore implémenté.\n" +
-                          "Veuillez patienter jusqu'à la fin du traitement en cours.")
+        if not self.processing:
+            return
+            
+        # Crée un fichier signal d'arrêt
+        try:
+            stop_signal = {
+                "stop_requested": True,
+                "timestamp": time.time(),
+                "message": "Arrêt demandé par l'utilisateur"
+            }
+            with open(self.stop_file, 'w') as f:
+                json.dump(stop_signal, f)
+            
+            # Met à jour l'interface
+            self.status_label.config(text="⏹ Arrêt en cours...", foreground="red")
+            self.stop_btn.config(state='disabled')
+            
+            print("Signal d'arrêt envoyé au processeur")
+            
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur lors de l'envoi du signal d'arrêt :\n{e}")
+    
+    def on_window_close(self):
+        """Gère la fermeture de la fenêtre"""
+        if self.processing:
+            # Demande confirmation si une simulation est en cours
+            if messagebox.askyesno("Confirmation", 
+                                 "Une simulation est en cours.\n" +
+                                 "Voulez-vous vraiment fermer l'application ?\n" +
+                                 "(La simulation sera interrompue)"):
+                self.stop_processing()
+                # Attend un petit moment pour que l'arrêt soit pris en compte
+                self.root.after(1000, self.force_close)
+            return
+        else:
+            # Pas de simulation en cours, ferme normalement
+            self.root.destroy()
+    
+    def force_close(self):
+        """Force la fermeture après un délai"""
+        self.processing = False
+        if self.status_check_timer:
+            self.root.after_cancel(self.status_check_timer)
+        self.root.destroy()
 
 
 def main():

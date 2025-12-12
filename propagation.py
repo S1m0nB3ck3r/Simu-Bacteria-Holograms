@@ -273,6 +273,7 @@ lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance):
 ################################               Calculs volumes               ############################################################
 #########################################################################################################################################
 
+
 def volume_propag_angular_spectrum_complex(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_VOLUME_PROPAG,
 lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distancePropagIni, pasPropag, nbPropag, f_pix_min, f_pix_max):
 
@@ -281,22 +282,15 @@ lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distancePropagIni, pa
 
     d_FFT_HOLO = fftshift(fft2(d_HOLO, norm = 'ortho'))
 
-    #print('somme avant fft:', cp.asnumpy(intensite(d_HOLO)).sum(), 'somme après FFT', cp.asnumpy(intensite(d_FFT_HOLO)).sum())
-
     if ((f_pix_min != 0) and (f_pix_max != 0)):
-        #d_spec_filter_FFT[nBlock, nthread](d_FFT_HOLO, d_FFT_HOLO, nb_pix_X, nb_pix_Y, f_pix_min, f_pix_max)
         d_spec_filter_FFT[nBlock, nthread](d_FFT_HOLO, d_FFT_HOLO, nb_pix_X, nb_pix_Y, f_pix_min, f_pix_max)
 
     for i in range(nbPropag):
         distance = distancePropagIni + i * pasPropag
         d_calc_kernel_angular_spectrum_jit[nBlock, nthread](d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
-        #analyse_array_cplx(d_KERNEL)
-
         d_FFT_HOLO_PROPAG = d_FFT_HOLO * d_KERNEL
-        #analyse_array_cplx(d_FFT_HOLO_PROPAG)
-        d_HOLO_VOLUME_PROPAG[:,:,i] = fft2(fftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
-        #print("\n intensité distance ", distance, " :")
-        #analyse_array_cplx(d_HOLO_VOLUME_PROPAG[:,:,i])
+        d_HOLO_VOLUME_PROPAG[:,:,i] = ifft2(ifftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
+
 
 
 def volume_propag_angular_spectrum_to_module(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_VOLUME_PROPAG_MODULE,
@@ -309,25 +303,15 @@ lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distancePropagIni, pa
 
     d_HOLO_PROPAG = cp.zeros(shape = (nb_pix_Y, nb_pix_X), dtype = cp.complex64)
 
-    #print('somme avant fft:', cp.asnumpy(intensite(d_HOLO)).sum(), 'somme après FFT', cp.asnumpy(intensite(d_FFT_HOLO)).sum())
-
     if ((f_pix_min != 0) and (f_pix_max != 0)):
         d_spec_filter_FFT[nBlock, nthread](d_FFT_HOLO, d_FFT_HOLO, nb_pix_X, nb_pix_Y, f_pix_min, f_pix_max)
 
     for i in range(nbPropag):
         distance = distancePropagIni + i * pasPropag
         d_calc_kernel_angular_spectrum_jit[nBlock, nthread](d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
-        #analyse_array_cplx(d_KERNEL)
         d_FFT_HOLO_PROPAG = d_FFT_HOLO * d_KERNEL
-        d_HOLO_PROPAG = fft2(fftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
-        d_HOLO_VOLUME_PROPAG_MODULE[:,:,i] = cp.flip(cp.flip(cp.sqrt(cp.real(d_HOLO_PROPAG)**2 + cp.imag(d_HOLO_PROPAG)**2), axis=1), axis=0)
+        d_HOLO_VOLUME_PROPAG_MODULE[i,:,:] = cp.abs(ifft2(ifftshift(d_FFT_HOLO_PROPAG), norm = 'ortho'))
 
-def test_multiFFT(d_plan, nb_FFT):
-    for i in range(nb_FFT):
-        d_fft_plan = fftshift(fft2(d_plan, norm = 'ortho'))
-        print('somme avant fft:', cp.asnumpy(intensite(d_plan)).sum(), 'somme après FFT', cp.asnumpy(intensite(d_fft_plan)).sum())
-        d_plan = fft2(fftshift(d_fft_plan), norm = 'ortho')
-        print('somme avant fft:', cp.asnumpy(intensite(d_plan)).sum(), 'somme après FFT', cp.asnumpy(intensite(d_fft_plan)).sum())
 
 def volume_propag_Rayleigh_Sommerfeld(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_VOLUME_PROPAG,
 lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, pasPropag, nbPropag):
@@ -339,11 +323,8 @@ lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, pasPropag, nbPropag):
     for i in range(nbPropag):
         distance = (i + 1)* pasPropag
         d_calc_kernel_propag_Rayleigh_Sommerfeld[nBlock, nthread](d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
-        #affichage(phase(d_KERNEL))
-        d_FFT_KERNEL = fftshift(fft2(d_KERNEL, norm = 'ortho'))
-        #affichage(phase(d_FFT_KERNEL))
         d_FFT_HOLO_PROPAG = d_FFT_HOLO * d_KERNEL
-        d_HOLO_VOLUME_PROPAG[:,:,i] = fft2(fftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
+        d_HOLO_VOLUME_PROPAG[:,:,i] = ifft2(ifftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
 
 def volume_propag_fresnell(d_HOLO, d_Holo_temp, d_FFT, d_HOLO_VOLUME_PROPAG, 
 lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, pasPropag, nbPropag):
