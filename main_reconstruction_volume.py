@@ -36,6 +36,8 @@ d_FFT_HOLO_PROPAG = cp.zeros(shape = (holo_size_xy, holo_size_xy), dtype = cp.co
 d_holo_propag = cp.zeros(shape = (holo_size_xy, holo_size_xy), dtype = cp.float32)
 d_KERNEL = cp.zeros(shape = (holo_size_xy, holo_size_xy), dtype = cp.complex64)
 d_HOLO_VOLUME_PROPAG_MODULE = cp.full(shape = (holo_size_xy, holo_size_xy, np_plan_propag), fill_value=False, dtype=np.float32)
+d_HOLO_VOLUME_PROPAG_CPLX = cp.full(shape = (holo_size_xy, holo_size_xy, np_plan_propag), fill_value=False, dtype=np.complex64)
+
 
 #start reconstruction
 holo_path = "./holo_simu.bmp"
@@ -43,12 +45,25 @@ holo_path = "./holo_simu.bmp"
 h_HOLO = read_image(holo_path)
 d_HOLO = cp.array(h_HOLO)
 
-volume_propag_angular_spectrum_to_module(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_VOLUME_PROPAG_MODULE,
-lambda_milieu, magnification, pix_size, holo_size_xy, holo_size_xy, distance_propag_ini, dz, np_plan_propag, 0.0, 0.0)
+output = "CPLX" # "MODULE" or "CPLX"
+if output == "MODULE":
+    volume_propag_angular_spectrum_to_module(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_VOLUME_PROPAG_MODULE,
+                                             lambda_milieu, magnification, pix_size, holo_size_xy, holo_size_xy, distance_propag_ini, dz, np_plan_propag, 0.0, 0.0)
+    
+    #affichage plan XY à Z = 50
+    display(d_HOLO_VOLUME_PROPAG_MODULE[:,:,50])
 
-#affichage plan XY à Z = 50
-affichage(d_HOLO_VOLUME_PROPAG_MODULE[:,:,50])
+    #affichage plan XZ à Y = 512
+    display(d_HOLO_VOLUME_PROPAG_MODULE[:,512,:])
 
-#affichage plan XZ à Y = 512
-affichage(d_HOLO_VOLUME_PROPAG_MODULE[:,512,:])
+else:
+    volume_propag_angular_spectrum_complex(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_VOLUME_PROPAG_CPLX, 
+                                           lambda_milieu, magnification, pix_size, holo_size_xy, holo_size_xy, distance_propag_ini, dz, np_plan_propag, 0.0, 0.0)
+    
+    #affichage plan XY à Z = 50
+    display(intensite(d_HOLO_VOLUME_PROPAG_CPLX[:,:,50]))
+
+    #affichage plan XZ à Y = 512
+    display(intensite(d_HOLO_VOLUME_PROPAG_CPLX[:,512,:]))
+
 
