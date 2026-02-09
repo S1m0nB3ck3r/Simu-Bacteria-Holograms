@@ -27,6 +27,7 @@ from PIL import Image
 # Ajoute le répertoire parent au path pour importer les modules
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent_dir)
+sys.path.insert(0, os.path.join(parent_dir, 'libs'))
 
 # Configuration de l'encodage pour éviter les erreurs sur Windows
 if sys.platform.startswith('win'):
@@ -35,6 +36,12 @@ if sys.platform.startswith('win'):
         os.system('chcp 65001 > nul')
     except:
         pass  # Ignore les erreurs si chcp n'est pas disponible
+
+# Add parent directory to path for imports
+import sys
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, parent_dir)
+sys.path.insert(0, os.path.join(parent_dir, 'libs'))
 
 from simu_hologram import (
     gen_random_bacteria, GPU_insert_bact_in_mask_volume,

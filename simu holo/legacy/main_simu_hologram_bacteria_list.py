@@ -1,10 +1,17 @@
 # -*- coding: utf-8 -*-
+# LEGACY SCRIPT - Use simu holo/main_simu_hologram.py instead
+# This file is kept for reference only
+
+# Add parent directory to path for imports
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'libs'))
 
 from simu_hologram import *
 import numpy as np
 import cupy as cp
 from cupyx import jit
-import os
 
 import math
 import time

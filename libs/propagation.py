@@ -40,8 +40,8 @@ import cupy as cp
 from cupy.fft import rfft2, fft2, ifft2, fftshift, ifftshift, fftn, ifftn
 from cupyx import jit
 from cupyx.scipy import ndimage as cp_ndimage
-import typeHolo
-from traitement_holo import *
+from . import typeHolo
+from .traitement_holo import *
 
 
 @jit.rawkernel()
@@ -289,7 +289,7 @@ lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distancePropagIni, pa
         distance = distancePropagIni + i * pasPropag
         d_calc_kernel_angular_spectrum_jit[nBlock, nthread](d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
         d_FFT_HOLO_PROPAG = d_FFT_HOLO * d_KERNEL
-        d_HOLO_VOLUME_PROPAG[:,:,i] = ifft2(ifftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
+        d_HOLO_VOLUME_PROPAG[i,:,:] = ifft2(ifftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
 
 
 

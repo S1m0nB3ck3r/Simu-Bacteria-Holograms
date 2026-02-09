@@ -1,10 +1,16 @@
 import os
+import sys
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'libs'))
+
 from simu_hologram import *
 import propagation as propag
+import CCL3D
+import focus
 import cupy as cp
 import matplotlib.pyplot as plt
 from torchmetrics.classification import BinaryPrecision, BinaryRecall, BinaryF1Score

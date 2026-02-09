@@ -33,7 +33,7 @@ import numpy as np
 from cupyx import jit
 from cupyx.scipy import ndimage as cp_ndimage
 import numpy as np
-from traitement_holo import *
+from . traitement_holo import *
 from enum import Enum
 
 class type_threshold(Enum):

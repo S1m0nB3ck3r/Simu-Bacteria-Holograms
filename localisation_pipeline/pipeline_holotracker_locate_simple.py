@@ -27,12 +27,17 @@ import cupy as cp
 import numpy as np
 import time
 import os
+import sys
 from PIL import Image
-from traitement_holo import *
-import propagation as propag
-import focus 
-from focus import Focus_type
-from CCL3D import *
+
+# Add the project root to the Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from libs.traitement_holo import *
+from libs import propagation as propag
+from libs import focus 
+from libs.focus import Focus_type
+from libs.CCL3D import *
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -41,7 +46,7 @@ import matplotlib.pyplot as plt
 # =============================================================================
 
 # Fichiers d'entrée et de sortie
-HOLOGRAM_FILE = "./simu_holo_test.bmp"
+HOLOGRAM_FILE = holo_path = os.path.join(os.path.dirname(__file__), "simu_holo_test.bmp")
 RESULT_FILE = "./result.csv"
 
 # Paramètres de l'hologramme

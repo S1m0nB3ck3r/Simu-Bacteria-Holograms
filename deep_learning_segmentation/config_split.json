@@ -1,0 +1,11 @@
+{
+    "description": "Configuration for data splitting",
+    "holo_dir": "C:\\Users\\becker14\\Documents\\test_SIMU_GUI\\2026_02_06_19_23_05\\simulated_hologram",
+    "seg_dir": "C:\\Users\\becker14\\Documents\\test_SIMU_GUI\\2026_02_06_19_23_05\\binary_volume",
+    "output_dir": "C:\\Users\\becker14\\Documents\\test_SIMU_GUI\\2026_02_06_19_23_05\\data_split",
+    "ratios": [0.7, 0.15, 0.15],
+    "seed": 42,
+    "use_symlink": false,
+    "hologram_prefix": "holo_",
+    "segmentation_prefix": "bin_volume_"
+}

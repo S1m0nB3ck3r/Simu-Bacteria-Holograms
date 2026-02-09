@@ -1,15 +1,20 @@
 # -*- coding: utf-8 -*-
-from traitement_holo import *
-from propagation import *
+import os
+import sys
 
+# Add the project root to the Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from libs.traitement_holo import *
+from libs.propagation import *
 
 import matplotlib.pyplot as plt
-import os
 from PIL import Image  
 import PIL
 import numpy as np
 import cupy as cp
 
+holo_path = os.path.join(os.path.dirname(__file__), "simu_holo_test.bmp")
 
 #Pramètres
 transmission_milieu = 1.0
@@ -35,23 +40,22 @@ d_FFT_HOLO = cp.zeros(shape = (holo_size_xy, holo_size_xy), dtype = cp.complex64
 d_FFT_HOLO_PROPAG = cp.zeros(shape = (holo_size_xy, holo_size_xy), dtype = cp.complex64)
 d_holo_propag = cp.zeros(shape = (holo_size_xy, holo_size_xy), dtype = cp.float32)
 d_KERNEL = cp.zeros(shape = (holo_size_xy, holo_size_xy), dtype = cp.complex64)
-d_HOLO_VOLUME_PROPAG_MODULE = cp.full(shape = (holo_size_xy, holo_size_xy, np_plan_propag), fill_value=False, dtype=np.float32)
-d_HOLO_VOLUME_PROPAG_CPLX = cp.full(shape = (holo_size_xy, holo_size_xy, np_plan_propag), fill_value=False, dtype=np.complex64)
+d_HOLO_VOLUME_PROPAG_MODULE = cp.full(shape = (np_plan_propag, holo_size_xy, holo_size_xy), fill_value=False, dtype=np.float32)
+d_HOLO_VOLUME_PROPAG_CPLX = cp.full(shape = (np_plan_propag, holo_size_xy, holo_size_xy), fill_value=False, dtype=np.complex64)
 
 
 #start reconstruction
-holo_path = "C:\\Users\\becker14\\Documents\\test_SIMU_GUI\\2025_12_12_09_39_30\\2025_12_12_09_40_16\\simulated_hologram\\holo_0.bmp"
 
 h_HOLO = read_image(holo_path)
 d_HOLO = cp.array(h_HOLO)
 
-output = "CPLX" # "MODULE" or "CPLX"
+output = "MODULE" # "MODULE" or "CPLX"
 if output == "MODULE":
     volume_propag_angular_spectrum_to_module(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_VOLUME_PROPAG_MODULE,
                                              lambda_milieu, magnification, pix_size, holo_size_xy, holo_size_xy, distance_propag_ini, dz, np_plan_propag, 0.0, 0.0)
     
     #affichage plan XY à Z = 50
-    display(d_HOLO_VOLUME_PROPAG_MODULE[:,:,50])
+    display(d_HOLO_VOLUME_PROPAG_MODULE[50,:,:])
 
     #affichage plan XZ à Y = 512
     display(d_HOLO_VOLUME_PROPAG_MODULE[:,512,:])
@@ -61,7 +65,7 @@ else:
                                            lambda_milieu, magnification, pix_size, holo_size_xy, holo_size_xy, distance_propag_ini, dz, np_plan_propag, 0.0, 0.0)
     
     #affichage plan XY à Z = 50
-    display(intensite(d_HOLO_VOLUME_PROPAG_CPLX[:,:,50]))
+    display(intensite(d_HOLO_VOLUME_PROPAG_CPLX[50,:,:]))
 
     #affichage plan XZ à Y = 512
     display(intensite(d_HOLO_VOLUME_PROPAG_CPLX[:,512,:]))

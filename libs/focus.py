@@ -39,7 +39,7 @@ import cupy as cp
 from cupy.fft import fft2, ifft2, fftshift, ifftshift
 from cupyx import jit
 from cupyx.scipy import ndimage as cp_ndimage
-from traitement_holo import *
+from . traitement_holo import *
 
 from enum import Enum
 class Focus_type(Enum):

@@ -1,10 +1,17 @@
 # -*- coding: utf-8 -*-
+# LEGACY SCRIPT - Use simu holo/main_simu_hologram.py instead
+# This file is kept for reference only
+
+# Add parent directory to path for imports
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'libs'))
 
 from simu_hologram import *
 import numpy as np
 import cupy as cp
 from cupyx import jit
-import os
 
 import math
 import time
@@ -97,7 +104,7 @@ if __name__ == "__main__":
 
     #allocations
     h_holo = np.zeros(shape = (holo_size_xy_w_b, holo_size_xy_w_b), dtype = np.float32)
-    d_holo = cp.zeros(shape = (holo_size_xy_w_b, holo_size_xy_w_b), dtype = cp.float32)
+    d_holo = cp.zeros(shape = (holo_size_xy_w_b, holo_size_xy_w_b), dtype = np.float32)
     d_fft_holo = cp.zeros(shape = (holo_size_xy_w_b, holo_size_xy_w_b), dtype = cp.complex64)
     d_fft_holo_propag = cp.zeros(shape = (holo_size_xy_w_b, holo_size_xy_w_b), dtype = cp.complex64)
     d_holo_propag = cp.zeros(shape = (holo_size_xy_w_b, holo_size_xy_w_b), dtype = cp.float32)
@@ -192,17 +199,6 @@ if __name__ == "__main__":
         
         save_volume_as_tiff(bin_tiff_stack_file, cp.asnumpy(cp_mask_volume != 0.0))
         save_volume_as_tiff(intensity_tiff_stack_file, cp.asnumpy(traitement_holo.intensite(croped_field_plane)))
-
-        # plt.imshow(plan, cmap="gray")
-        # plt.title("Projection Z (masque)")
-        # plt.colorbar()
-        # plt.show()
-        
-        # bool_vol, t2, t3, t4 = load_holo_data(data_file)
-
-        # print("non zero :", np.count_nonzero(bool_vol.astype(np.float32) != 0.0))
-
-        # plan = cp.asnumpy(bool_vol).sum(axis=2)
 
         # plt.imshow(plan, cmap="gray")
         # plt.title("Projection Z (masque)")

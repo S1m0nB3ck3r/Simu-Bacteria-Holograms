@@ -1,0 +1,66 @@
+{
+    "mode": "sphere_list",
+    "nb_holo": 1,
+    "output_dir": null,
+    
+    "holo_size_xy": 2048,
+    "border": 512,
+    "upscale_factor": 1,
+    "z_size": 200,
+    
+    "pix_size": 5.5e-6,
+    "magnification": 40.0,
+    "index_medium": 1.33,
+    "index_object": 1.5,
+    "wavelength": 660e-9,
+    
+    "illumination_mean": 1.0,
+    "noise_std_min": 0.01,
+    "noise_std_max": 0.1,
+    
+    "distance_volume_camera": 0.01,
+    
+    "save_options": {
+        "hologram_bmp": true,
+        "hologram_tiff": false,
+        "hologram_npy": false,
+        "propagated_tiff": true,
+        "propagated_npy": false,
+        "segmentation_tiff": true,
+        "segmentation_npy": false,
+        "positions_csv": true
+    },
+    
+    "spheres": [
+        {
+            "pos_x": 2.0e-5,
+            "pos_y": 2.0e-5,
+            "pos_z": 5.0e-5,
+            "radius": 0.8e-6
+        },
+        {
+            "pos_x": 4.0e-5,
+            "pos_y": 2.5e-5,
+            "pos_z": 6.0e-5,
+            "radius": 1.2e-6
+        },
+        {
+            "pos_x": 6.0e-5,
+            "pos_y": 3.0e-5,
+            "pos_z": 7.0e-5,
+            "radius": 1.5e-6
+        },
+        {
+            "pos_x": 3.0e-5,
+            "pos_y": 4.5e-5,
+            "pos_z": 5.5e-5,
+            "radius": 1.0e-6
+        },
+        {
+            "pos_x": 5.5e-5,
+            "pos_y": 1.5e-5,
+            "pos_z": 8.0e-5,
+            "radius": 0.9e-6
+        }
+    ]
+}

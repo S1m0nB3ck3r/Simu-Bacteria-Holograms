@@ -38,8 +38,8 @@ import time
 import matplotlib.pyplot as plt
 import datetime
 
-import propagation
-import traitement_holo
+from . import propagation
+from . import traitement_holo
 from PIL import Image
 import tifffile  
 import PIL
