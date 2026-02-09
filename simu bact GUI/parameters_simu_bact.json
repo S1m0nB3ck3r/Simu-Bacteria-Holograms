@@ -1,9 +1,9 @@
 {
     "output_base_path": "C:/Users/becker14/Documents/test_SIMU_GUI",
-    "number_of_holograms": 500,
-    "number_of_bacteria": 50,
-    "holo_size_xy": 1024,
-    "border": 512,
+    "number_of_holograms": 200,
+    "number_of_bacteria": 20,
+    "holo_size_xy": 512,
+    "border": 128,
     "upscale_factor": 2,
     "z_size": 200,
     "transmission_milieu": 1.0,

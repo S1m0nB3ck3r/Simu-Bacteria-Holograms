@@ -3,8 +3,8 @@
     "description": "Baseline 3D U-Net training for hologram segmentation",
     
     "paths": {
-        "data_base_path": "C:\\Users\\becker14\\Documents\\test_SIMU_GUI\\2026_02_06_19_23_05\\data_split",
-        "model_output_dir": "C:\\Users\\becker14\\Documents\\test_SIMU_GUI\\2026_02_06_19_23_05\\models",
+        "data_base_path": "C:\\Users\\becker14\\Documents\\test_SIMU_GUI\\512_512\\data_split",
+        "model_output_dir": "C:\\Users\\becker14\\Documents\\test_SIMU_GUI\\512_512\\data_split\\models",
         "train_subdir": "train",
         "val_subdir": "val",
         "test_subdir": "test",
@@ -18,23 +18,29 @@
     
     "training": {
         "batch_size": 2,
-        "learning_rate": 0.0001,
-        "num_epochs": 50,
-        "early_stopping_patience": 10,
-        "lr_scheduler_patience": 5,
+        "learning_rate": 0.001,
+        "num_epochs": 200,
+        "early_stopping_patience": 50,
+        "lr_scheduler_patience": 20,
         "lr_scheduler_factor": 0.5
+    },
+    
+    "loss": {
+        "bce_weight": 0.3,
+        "dice_weight": 0.7,
+        "pos_weight": 10.0
     },
     
     "data": {
         "hologram_prefix": "holo_",
         "segmentation_prefix": "bin_volume_",
         "patch_size_xy": [128, 128],
-        "stride_xy": [112, 112],
+        "stride_xy": [96, 96],
         "patch_size_z": 64,
-        "stride_z": 56,
+        "stride_z": 48,
         "reconstruction_parameters": {
-            "holo_size_x": 1024,
-            "holo_size_y": 1024,
+            "holo_size_x": 512,
+            "holo_size_y": 512,
             "holo_plane_number": 200,
             "medium_wavelength": 6.6e-7,
             "magnification_cam": 40,

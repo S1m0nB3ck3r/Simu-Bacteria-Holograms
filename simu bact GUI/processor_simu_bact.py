@@ -43,14 +43,9 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, parent_dir)
 sys.path.insert(0, os.path.join(parent_dir, 'libs'))
 
-from simu_hologram import (
-    gen_random_bacteria, GPU_insert_bact_in_mask_volume,
-    pad_centered, save_holo_data, save_volume_as_tiff,
-    phase_shift_through_plane
-)
-import propagation
-import traitement_holo
-from PIL import Image
+from libs import propagation
+from libs import traitement_holo
+from libs import simu_hologram
 import tifffile
 
 def display_image(array_2d, normalize=True):
@@ -307,7 +302,7 @@ def generate_hologram(params, iteration, dirs, status_file=None):
     longueur_min_max = {min: longueur_min, max: longueur_max}
     epaisseur_min_max = {min: epaisseur_min, max: epaisseur_max}
     
-    liste_bacteries = gen_random_bacteria(
+    liste_bacteries = simu_hologram.gen_random_bacteria(
         number_of_bact=number_of_bacteria,
         xyz_min_max=[0, holo_size_xy * vox_size_xy, 
                      0, holo_size_xy * vox_size_xy, 
@@ -343,7 +338,7 @@ def generate_hologram(params, iteration, dirs, status_file=None):
             if status_file:
                 progress = 30 + int(20 * (i + 1) / number_of_bacteria)
                 update_status(status_file, 3, f"Insertion bactérie {i+1}/{number_of_bacteria}...", progress)
-        GPU_insert_bact_in_mask_volume(cp_mask_volume_upscaled, bact, 
+        simu_hologram.GPU_insert_bact_in_mask_volume(cp_mask_volume_upscaled, bact, 
                                       vox_size_xy / upscale_factor, vox_size_z)
             
     # Inversion de l'axe Z et downsampling
@@ -388,12 +383,12 @@ def generate_hologram(params, iteration, dirs, status_file=None):
         croped_plane = cp_field_plane[border:border+holo_size_xy, border:border+holo_size_xy]
         cp_intensity_volume[:, :, i] = traitement_holo.intensite(croped_plane)
         
-        cp_mask_plane_w_border = pad_centered(cp_mask_volume[:, :, i], 
+        cp_mask_plane_w_border = simu_hologram.pad_centered(cp_mask_volume[:, :, i], 
                                              [holo_size_xy_w_b, holo_size_xy_w_b])
         
         
         # Correction de phase
-        cp_field_plane = phase_shift_through_plane(
+        cp_field_plane = simu_hologram.phase_shift_through_plane(
             mask_plane=cp_mask_plane_w_border,
             plane_to_shift=cp_field_plane,
             shift_in_env=shift_in_env,
@@ -459,7 +454,7 @@ def generate_hologram(params, iteration, dirs, status_file=None):
     
     # Volume propagé TIFF multistack
     if save_opts['propagated_tiff']:
-        save_volume_as_tiff(intensity_tiff_file, intensity_volume)
+        simu_hologram.save_volume_as_tiff(intensity_tiff_file, intensity_volume)
         saved_files.append(f"Volume propagé TIFF : {intensity_tiff_file}")
     
     # Volume propagé NPY
@@ -469,7 +464,7 @@ def generate_hologram(params, iteration, dirs, status_file=None):
     
     # Volume segmentation TIFF multistack
     if save_opts['segmentation_tiff']:
-        save_volume_as_tiff(bin_tiff_file, bool_volume)
+        simu_hologram.save_volume_as_tiff(bin_tiff_file, bool_volume)
         saved_files.append(f"Volume segmentation TIFF : {bin_tiff_file}")
     
     # Volume segmentation NPY bool

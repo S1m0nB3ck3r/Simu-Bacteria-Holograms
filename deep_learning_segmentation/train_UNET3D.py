@@ -21,7 +21,42 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 from torchmetrics.classification import BinaryPrecision, BinaryRecall, BinaryF1Score
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from model import UNet3D, HologramToSegmentationDataset, VolumeBatchSampler, dice_coefficient
+
+
+class SegmentationLoss(nn.Module):
+    """Combined BCE and Dice loss for highly imbalanced segmentation
+    
+    Args:
+        bce_weight: Weight for BCE loss component (default: 0.3)
+        dice_weight: Weight for Dice loss component (default: 0.7)
+        pos_weight: Weight multiplier for positive class in BCE (default: 10.0)
+    """
+    def __init__(self, bce_weight=0.3, dice_weight=0.7, pos_weight=10.0):
+        super(SegmentationLoss, self).__init__()
+        self.bce_weight = bce_weight
+        self.dice_weight = dice_weight
+        self.bce = nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor([pos_weight]),
+            reduction='mean'
+        )
+    
+    def dice_loss(self, pred, target):
+        """Dice loss component"""
+        pred = torch.sigmoid(pred)
+        smooth = 1.0
+        intersection = (pred * target).sum()
+        union = pred.sum() + target.sum()
+        dice = (2. * intersection + smooth) / (union + smooth)
+        return 1 - dice
+    
+    def forward(self, pred, target):
+        """Compute combined loss"""
+        bce = self.bce(pred, target)
+        dice = self.dice_loss(pred, target)
+        return self.bce_weight * bce + self.dice_weight * dice
 
 
 def train(model, dataloader, optimizer, criterion, device, verbose_timing=False):
@@ -76,6 +111,14 @@ def train(model, dataloader, optimizer, criterion, device, verbose_timing=False)
         n_batches += 1
 
         # Print timing for each batch if verbose
+        if verbose_timing:
+            batch_total_time = time.time() - batch_start
+            precision = precision_metric.compute().item()
+            recall = recall_metric.compute().item()
+            print(f"  Batch {i+1}/{len(dataloader)} | Loss: {loss.item():.4f} | "
+                  f"Dice: {dice:.4f} | Prec: {precision:.4f} | Rec: {recall:.4f} | "
+                  f"Total: {batch_total_time:.3f}s "
+                  f"(Data: {data_load_time:.3f}s | Fwd: {forward_time:.3f}s | Bwd: {backward_time:.3f}s)")
         if verbose_timing:
             batch_total = time.time() - batch_start
             print(f"  Batch {i+1}/{len(dataloader)} | Loss: {loss.item():.4f} | Dice: {dice:.4f} | "
@@ -371,7 +414,23 @@ if __name__ == "__main__":
     
     model = UNet3D(dropout_prob=DROPOUT_PROB).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    criterion = nn.BCEWithLogitsLoss(reduction='mean')
+    
+    # Use combined loss for imbalanced data
+    loss_config = config.get('loss', {})
+    bce_weight = loss_config.get('bce_weight', 0.3)
+    dice_weight = loss_config.get('dice_weight', 0.7)
+    pos_weight = loss_config.get('pos_weight', 10.0)
+    criterion = SegmentationLoss(
+        bce_weight=bce_weight,
+        dice_weight=dice_weight,
+        pos_weight=pos_weight
+    ).to(device)
+    
+    print(f"\nLoss configuration:")
+    print(f"  - Type: Combined (BCE + Dice)")
+    print(f"  - BCE weight: {bce_weight}")
+    print(f"  - Dice weight: {dice_weight}")
+    print(f"  - Positive class weight: {pos_weight}")
     
     lr_patience = training_config.get('lr_scheduler_patience', 5)
     lr_factor = training_config.get('lr_scheduler_factor', 0.5)

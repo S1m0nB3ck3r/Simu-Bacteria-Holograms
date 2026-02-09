@@ -16,9 +16,12 @@ from torch.utils.data import Dataset
 import numpy as np
 import cupy as cp
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'libs'))
+# Add the project root to the Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-import propagation as propag
+# Import avec le namespace libs
+from libs import propagation as propag
+from libs import traitement_holo
 
 
 class VolumeReconstructor:
@@ -39,29 +42,51 @@ class VolumeReconstructor:
         self.d_KERNEL = cp.zeros(shape=(self.nb_pix_X, self.nb_pix_Y), dtype=cp.complex64)
         self.d_volume_module = cp.zeros(shape=(self.nb_pix_X, self.nb_pix_Y, self.nb_plan), dtype=cp.float32)
 
-    def volume_reconstruction(self, h_holo, parameters=None):
+    def volume_reconstruction(self, hologram, parameters):
         """
-        Reconstruct 3D volume from hologram
+        Reconstruct 3D volume from hologram using angular spectrum propagation
         
-        Args:
-            h_holo: 2D hologram image
-            parameters: Optional parameters dict (will reinitialize if different)
-            
         Returns:
-            Normalized volume tensor of shape (1, X, Y, Z)
+            torch.Tensor: Reconstructed volume with shape (1, D, H, W) where D is depth (Z)
         """
-        if parameters is not None and parameters != self.parameters:
-            self.__init__(parameters)
-        d_holo = cp.asarray(h_holo)
+        holo_size_x = parameters['holo_size_x']
+        holo_size_y = parameters['holo_size_y']
+        holo_plane_number = parameters['holo_plane_number']
+        
+        # GPU arrays - NOTE: propagation uses (Z, Y, X) ordering
+        d_HOLO = cp.array(hologram, dtype=cp.float32)
+        d_FFT_HOLO = cp.zeros(shape=(holo_size_y, holo_size_x), dtype=cp.complex64)
+        d_KERNEL = cp.zeros(shape=(holo_size_y, holo_size_x), dtype=cp.complex64)
+        d_FFT_HOLO_PROPAG = cp.zeros(shape=(holo_size_y, holo_size_x), dtype=cp.complex64)
+        
+        # Volume in (Z, Y, X) order as expected by propagation
+        d_HOLO_VOLUME_PROPAG_MODULE = cp.zeros(
+            shape=(holo_plane_number, holo_size_y, holo_size_x), 
+            dtype=cp.float32
+        )
+        
+        # Propagation parameters
+        medium_wavelength = parameters['medium_wavelength']
+        magnification_cam = parameters['magnification_cam']
+        pix_size_cam = parameters['pix_size_cam']
+        Z_step = parameters['Z_step']
+        
+        # Reconstruct volume
         propag.volume_propag_angular_spectrum_to_module(
-            d_holo, self.d_fft_holo, self.d_KERNEL, self.d_fft_holo_propag, self.d_volume_module,
-            self.lambda_milieu, self.magnification, self.pix_size, self.nb_pix_X, self.nb_pix_Y,
-            0.0, self.dz, self.nb_plan, 0, 0)
-        volume_np = cp.asnumpy(self.d_volume_module)
-        # Normalisation pour l'entraînement
-        volume_np = (volume_np - volume_np.mean()) / (volume_np.std() + 1e-8)
-        volume_tensor = torch.from_numpy(volume_np).unsqueeze(0)
-        return volume_tensor
+            d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_HOLO_PROPAG, 
+            d_HOLO_VOLUME_PROPAG_MODULE,
+            medium_wavelength, magnification_cam, pix_size_cam,
+            holo_size_x, holo_size_y, 0.0, Z_step, holo_plane_number, 0.0, 0.0
+        )
+        
+        # Convert to numpy: shape is (Z, Y, X)
+        volume_np = cp.asnumpy(d_HOLO_VOLUME_PROPAG_MODULE)
+        
+        # Convert to torch and add channel dimension: (1, Z, Y, X) 
+        # Note: PyTorch 3D convolutions expect (C, D, H, W) format
+        volume_torch = torch.from_numpy(volume_np).unsqueeze(0).float()
+        
+        return volume_torch
 
 
 class HologramToSegmentationDataset(Dataset):
@@ -130,13 +155,13 @@ class HologramToSegmentationDataset(Dataset):
             # Load one sample to get dimensions for patch indexing
             if file_idx == 0:
                 bool_volume = np.load(seg_path)
-                W, H, D = bool_volume.shape
+                X, Y, Z = bool_volume.shape  # Stored as (X, Y, Z)
             
-            # Index all possible patches for this file
-            for y in range(0, H - patch_size_XY[1] + 1, stride_XY[1]):
-                for x in range(0, W - patch_size_XY[0] + 1, stride_XY[0]):
-                    for z in range(0, D - patch_size_Z + 1, stride_Z):
-                        self.slice_index.append((file_idx, x, y, z))
+            # Index all possible patches for this file in (Z, Y, X) order
+            for z in range(0, Z - patch_size_Z + 1, stride_Z):
+                for y in range(0, Y - patch_size_XY[1] + 1, stride_XY[1]):
+                    for x in range(0, X - patch_size_XY[0] + 1, stride_XY[0]):
+                        self.slice_index.append((file_idx, z, y, x))
         
         print(f"Indexing complete. Total patches: {len(self.slice_index)}")
         
@@ -149,7 +174,7 @@ class HologramToSegmentationDataset(Dataset):
         return len(self.slice_index)
 
     def __getitem__(self, idx):
-        file_idx, x, y, z = self.slice_index[idx]
+        file_idx, z, y, x = self.slice_index[idx]  # Now in (Z, Y, X) order
         
         # Check if we need to load/reconstruct this volume
         if self.cached_file_idx != file_idx:
@@ -165,18 +190,21 @@ class HologramToSegmentationDataset(Dataset):
                 print(f"    [Volume {file_idx}] Loading files: {load_time:.4f}s", end="")
                 recon_start = time.time()
             
-            # Load hologram and segmentation
+            # Load hologram and segmentation (stored as X, Y, Z)
             hologram_image = np.load(holo_path)
-            bool_volume = np.load(seg_path)
+            bool_volume_xyz = np.load(seg_path)
             
             if self.verbose_timing:
                 io_time = time.time() - recon_start
                 print(f" | I/O: {io_time:.4f}s", end="")
                 recon_start = time.time()
             
-            # Reconstruct volume
+            # Reconstruct volume - returns (1, Z, Y, X)
             volume_tensor = self.reconstructor.volume_reconstruction(hologram_image, self.parameters)
-            bool_tensor = torch.from_numpy(bool_volume).unsqueeze(0).to(torch.float32)
+            
+            # Convert segmentation from (X, Y, Z) to (Z, Y, X) to match
+            bool_volume_zyx = bool_volume_xyz.transpose(2, 1, 0)
+            bool_tensor = torch.from_numpy(bool_volume_zyx).unsqueeze(0).to(torch.float32)
             
             if self.verbose_timing:
                 recon_time = time.time() - recon_start
@@ -194,9 +222,9 @@ class HologramToSegmentationDataset(Dataset):
         px, py = self.patch_size_XY
         pz = self.patch_size_Z
 
-        # Extract patch
-        volume_patch = volume_tensor[:, x:x + px, y:y + py, z:z + pz]
-        bool_patch = bool_tensor[:, x:x + px, y:y + py, z:z + pz]
+        # Extract patch in (C, Z, Y, X) order - indices already correct
+        volume_patch = volume_tensor[:, z:z+pz, y:y+py, x:x+px]
+        bool_patch = bool_tensor[:, z:z+pz, y:y+py, x:x+px]
 
         return volume_patch, bool_patch
 
