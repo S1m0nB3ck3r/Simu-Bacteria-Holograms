@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import numpy as np
 
 class info_Holo:
     nb_pix_X = 0

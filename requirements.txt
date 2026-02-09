@@ -1,0 +1,65 @@
+# Simu-Bacteria-Holograms - Requirements
+# Generated: February 2026
+
+# ============================================================================
+# CORE DEPENDENCIES (Required)
+# ============================================================================
+
+# Numerical computing
+numpy>=1.26.0
+scipy>=1.15.0
+
+# GPU Computing (CUDA required)
+cupy-cuda11x>=12.2.0    # Use cupy-cuda12x for CUDA 12.x
+
+# Image processing
+Pillow>=10.2.0
+tifffile>=2023.9.26
+
+# Data manipulation
+pandas>=2.2.0
+
+# Visualization
+matplotlib>=3.9.0
+
+# ============================================================================
+# DEEP LEARNING (Optional - for U-Net 3D)
+# ============================================================================
+
+# PyTorch (for deep learning models)
+torch>=2.7.0
+torchvision>=0.22.0
+torchmetrics>=1.7.0
+
+# ============================================================================
+# ADDITIONAL DEPENDENCIES
+# ============================================================================
+
+# Connected components 3D (for CCL3D module)
+connected-components-3d>=3.10.0
+
+# ============================================================================
+# NOTES
+# ============================================================================
+# 
+# 1. GPU Support:
+#    - Requires NVIDIA GPU with CUDA support
+#    - Install CuPy matching your CUDA version:
+#      * CUDA 11.x: pip install cupy-cuda11x
+#      * CUDA 12.x: pip install cupy-cuda12x
+#
+# 2. PyTorch Installation:
+#    - For GPU support, follow official instructions at pytorch.org
+#    - Example for CUDA 11.8:
+#      pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#
+# 3. Optional Dependencies:
+#    - PyTorch packages only needed for deep learning (deep_learning_segmentation/)
+#    - Classical pipelines work without PyTorch
+#
+# 4. Installation:
+#    pip install -r requirements.txt
+#
+# 5. Verification:
+#    python -c "import cupy as cp; print(f'CuPy OK - {cp.cuda.runtime.getDeviceCount()} GPU(s)')"
+#

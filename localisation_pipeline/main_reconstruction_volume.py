@@ -7,10 +7,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from libs.traitement_holo import *
 from libs.propagation import *
-
-import matplotlib.pyplot as plt
-from PIL import Image  
-import PIL
 import numpy as np
 import cupy as cp
 

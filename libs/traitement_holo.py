@@ -32,10 +32,8 @@ import numpy as np
 import cupy as cp
 import time
 import math
-import cc3d
 from cupyx import jit
 import cupy as cp
-from cupy.fft import rfft2, fft2, ifft2, fftshift, ifftshift, fftn, ifftn
 import matplotlib.pyplot as plt
 
 

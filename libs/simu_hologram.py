@@ -30,20 +30,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 import numpy as np
 import cupy as cp
 from cupyx import jit
-import csv
-import os
-
 import math
-import time
 import matplotlib.pyplot as plt
-import datetime
-
-from . import propagation
-from . import traitement_holo
-from PIL import Image
 import tifffile  
-import PIL
-import argparse
 
 class Bacterie():
 
