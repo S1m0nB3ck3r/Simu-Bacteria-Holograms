@@ -477,3 +477,122 @@ def save_volume_as_tiff(filepath_tiff, hologram_volume: np.ndarray):
     tifffile.imwrite(filepath_tiff, volume_uint8, photometric='minisblack')
     
     print(f"Volume 3D sauvegardé : {filepath_tiff}")
+
+
+def create_illumination_field(field_size_xy_pix: int, wavelength: float, pixel_size: float, medium_index: float,
+                              magnification: float,
+                              number_of_sources: int, sources_angle_degree_X: list[float], sources_angle_degree_Y: list[float],
+                              noise_mean: float = 1.0, noise_std: float = 0.05) -> cp.ndarray:
+    """
+    Crée un champ d'illumination 2D multi-sources avec bruit gaussien sur l'amplitude
+    et phase de départ aléatoire.
+
+    Le champ est échantillonné au plan objet avec un pas de pixel_size / magnification,
+    cohérent avec propag_angular_spectrum.
+
+    Args:
+        field_size_xy_pix : taille du champ en pixels (carré)
+        wavelength        : longueur d'onde dans le vide (m)
+        pixel_size        : taille d'un pixel capteur (m)
+        medium_index      : indice du milieu
+        magnification     : grossissement du système optique
+        number_of_sources : nombre de sources (ondes planes)
+        sources_angle_degree_X : angles d'inclinaison selon X (degrés)
+        sources_angle_degree_Y : angles d'inclinaison selon Y (degrés)
+        noise_mean        : moyenne du bruit gaussien sur l'amplitude (défaut=1.0)
+        noise_std         : écart-type du bruit gaussien sur l'amplitude (défaut=0.05)
+
+    Returns:
+        cp.ndarray: champ complexe 2D (complex64)
+    """
+
+    # Pas de pixel au plan objet (cohérent avec propag_angular_spectrum)
+    effective_pixel_size = pixel_size / magnification
+
+    center = field_size_xy_pix // 2
+    x = (cp.arange(field_size_xy_pix) - center) * effective_pixel_size
+    y = (cp.arange(field_size_xy_pix) - center) * effective_pixel_size
+    X, Y = cp.meshgrid(x, y, indexing='ij')
+
+    # Vecteur d'onde dans le milieu
+    lambda_medium = wavelength / medium_index
+    k0 = 2.0 * math.pi / lambda_medium
+
+    field = cp.zeros((field_size_xy_pix, field_size_xy_pix), dtype=cp.complex64)
+
+    for i in range(number_of_sources):
+        angle_X_rad = math.radians(sources_angle_degree_X[i])
+        angle_Y_rad = math.radians(sources_angle_degree_Y[i])
+        kx = k0 * math.sin(angle_X_rad)
+        ky = k0 * math.sin(angle_Y_rad)
+
+        # Phase de départ aléatoire
+        random_phase = 2 * math.pi * np.random.random()
+
+        plane_wave = cp.exp(1j * (kx * X + ky * Y + random_phase))
+        field += plane_wave
+
+    # Normalisation par le nombre de sources
+    field /= number_of_sources
+
+    # Bruit gaussien sur l'amplitude (multiplication directe, pas de séparation module/phase)
+    amplitude_noise = cp.asarray(
+        np.abs(np.random.normal(noise_mean, noise_std, (field_size_xy_pix, field_size_xy_pix)))
+    ).astype(cp.float32)
+
+    field = field * amplitude_noise
+
+    return field
+
+def display_complex_plane(complex_plane, title: str = ""):
+    """
+    Affiche le module et la phase d'un plan 2D complexe côte à côte.
+
+    Args:
+        complex_plane: plan 2D complexe (cp.ndarray ou np.ndarray)
+        title: titre optionnel pour la figure
+    """
+    if isinstance(complex_plane, cp.ndarray):
+        complex_plane = cp.asnumpy(complex_plane)
+
+    module = np.abs(complex_plane)
+    phase = np.angle(complex_plane)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+    im1 = ax1.imshow(module, cmap='gray')
+    ax1.set_title("Module")
+    plt.colorbar(im1, ax=ax1)
+
+    im2 = ax2.imshow(phase, cmap='hsv', vmin=-np.pi, vmax=np.pi)
+    ax2.set_title("Phase")
+    plt.colorbar(im2, ax=ax2)
+
+    if title:
+        fig.suptitle(title, fontsize=14)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def display_real_plane(real_plane, title: str = "", cmap: str = "gray"):
+    """
+    Affiche une image d'un plan 2D réel.
+
+    Args:
+        real_plane: plan 2D réel (cp.ndarray ou np.ndarray)
+        title: titre optionnel pour la figure
+        cmap: colormap matplotlib (défaut='gray')
+    """
+    if isinstance(real_plane, cp.ndarray):
+        real_plane = cp.asnumpy(real_plane)
+
+    fig, ax = plt.subplots(1, 1, figsize=(6, 5))
+
+    im = ax.imshow(real_plane, cmap=cmap)
+    if title:
+        ax.set_title(title, fontsize=14)
+    plt.colorbar(im, ax=ax)
+
+    plt.tight_layout()
+    plt.show()
