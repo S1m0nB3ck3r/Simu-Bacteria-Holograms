@@ -315,19 +315,6 @@ def simulate_bacteria_random(config, dirs):
     d_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.float32)
     d_KERNEL = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
     
-    parameters = {
-        'holo_size_x': holo_size_xy,
-        'holo_size_y': holo_size_xy,
-        'holo_plane_number': z_size,
-        'medium_index': index_milieu,
-        'object_index': index_objet,
-        'pix_size_cam': pix_size,
-        'magnification_cam': grossissement,
-        'Z_step': vox_size_z,
-        'illumination_wavelength': wavelength,
-        'medium_wavelength': lambda_milieu
-    }
-    
     rnd = np.random.default_rng()
     
     for n in range(nb_holo_to_simulate):
@@ -355,18 +342,6 @@ def simulate_bacteria_random(config, dirs):
         for bact in liste_bacteries:
             bact.to_file(positions_file)
         
-        bacteria_list = [
-            {
-                "thickness": b.thickness,
-                "length": b.length,
-                "x_position_m": b.pos_x,
-                "y_position_m": b.pos_y,
-                "z_position_m": b.pos_z,
-                "theta_angle": b.theta,
-                "phi_angle": b.phi
-            }
-            for b in liste_bacteries
-        ]
         
         # Insert bacteria in volume
         print("  - Inserting bacteria in volume...")
@@ -378,6 +353,7 @@ def simulate_bacteria_random(config, dirs):
         
         # Flip Z axis
         cp_mask_volume_upscaled = cp.flip(cp_mask_volume_upscaled, axis=2)
+        # Downscale with mean for smooth bacteria border
         cp_mask_volume = cp_mask_volume_upscaled[:,:,:].reshape(
             holo_size_xy, upscale_factor, holo_size_xy, upscale_factor, z_size
         ).mean(axis=(1, 3))
@@ -397,16 +373,17 @@ def simulate_bacteria_random(config, dirs):
             ecart_type_bruit = ((config['noise_std_max'] - config['noise_std_min']) * rnd.random() +
                                config['noise_std_min'])
             cp_field_plane = create_illumination_field(
-                field_size_xy_pix=holo_size_xy_w_b,
-                wavelength=wavelength,
-                pixel_size=vox_size_xy,
-                medium_index=index_milieu,
-                number_of_sources=1,
-                sources_angle_degree_X=[angle_X],
-                sources_angle_degree_Y=[angle_Y],
-                noise_mean=config['illumination_mean'],
-                noise_std=ecart_type_bruit
-            )
+                            field_size_xy_pix=holo_size_xy_w_b,
+                            wavelength=wavelength,
+                            pixel_size=pix_size,
+                            medium_index=index_milieu,
+                            magnification=grossissement,
+                            number_of_sources=1,
+                            sources_angle_degree_X=[angle_X],
+                            sources_angle_degree_Y=[angle_Y],
+                            noise_mean=config['illumination_mean'],
+                            noise_std=ecart_type_bruit
+                        )
             
             # Propagation
             print("  - Propagating hologram...")
@@ -495,7 +472,7 @@ def simulate_bacteria_list(config, dirs):
     # GPU allocations
     d_fft_holo = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
     d_fft_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
-    d_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.float32)
+    d_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
     d_KERNEL = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
     
     rnd = np.random.default_rng()
@@ -526,8 +503,8 @@ def simulate_bacteria_list(config, dirs):
                 pos_z=bact_config['pos_z'],
                 length=bact_config['length'],
                 thickness=bact_config['thickness'],
-                theta=bact_config.get('theta', 0.0),
-                phi=bact_config.get('phi', 0.0)
+                theta=bact_config['theta'],
+                phi=bact_config['phi']
             )
             liste_bacteries.append(bact)
         
@@ -535,9 +512,7 @@ def simulate_bacteria_list(config, dirs):
         print("  - Saving bacteria positions...")
         with open(positions_file, 'w') as f:
             for bact in liste_bacteries:
-                f.write(f"{bact_config['pos_x']}\t{bact_config['pos_y']}\t"
-                       f"{bact_config['pos_z']}\t{bact_config['length']}\t{bact_config['thickness']}\t"
-                       f"{bact_config['theta']}\t{bact_config['phi']}\n")
+                f.write(f"{bact_config['pos_x']}\t{bact_config['pos_y']}\t{bact_config['pos_z']}\t{bact_config['length']}\t{bact_config['thickness']}\t{bact_config['theta']}\t{bact_config['phi']}\n")
         
         # Insert bacteria in volume
         print("  - Inserting bacteria in volume...")
@@ -552,7 +527,7 @@ def simulate_bacteria_list(config, dirs):
         ).mean(axis=(1, 3))
         
         bool_volume_mask = cp.asnumpy(cp_mask_volume > 0.0)
-        
+
         # Loop over illumination sources (1 hologram per source)
         for src_idx in range(config['number_of_sources']):
             angle_X = config['sources_angle_degree_X'][src_idx]
@@ -577,7 +552,7 @@ def simulate_bacteria_list(config, dirs):
                 noise_mean=config['illumination_mean'],
                 noise_std=ecart_type_bruit
             )
-            
+
             # Propagation
             print("  - Propagating hologram...")
             for i in range(z_size):
@@ -601,6 +576,8 @@ def simulate_bacteria_list(config, dirs):
             cropped_field_plane = cp_field_plane[border:border+holo_size_xy, 
                                                  border:border+holo_size_xy]
             
+            display_complex_plane(cropped_field_plane, title=f"Initial field plane (source {src_idx+1})")
+    
             intensity_image = cp.asnumpy(traitement_holo.intensite(cropped_field_plane))
             
             print("  - Saving results...")
@@ -670,19 +647,6 @@ def simulate_sphere_random(config, dirs):
     d_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.float32)
     d_KERNEL = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
     
-    parameters = {
-        'holo_size_x': holo_size_xy,
-        'holo_size_y': holo_size_xy,
-        'holo_plane_number': z_size,
-        'medium_index': index_milieu,
-        'object_index': index_objet,
-        'pix_size_cam': pix_size,
-        'magnification_cam': grossissement,
-        'Z_step': vox_size_z,
-        'illumination_wavelength': wavelength,
-        'medium_wavelength': lambda_milieu
-    }
-    
     rnd = np.random.default_rng()
     
     # Volume constraints - spheres inserted in central region
@@ -710,16 +674,6 @@ def simulate_sphere_random(config, dirs):
                 f.write(f"{sphere.pos_x - border*vox_size_xy}\t{sphere.pos_y - border*vox_size_xy}\t"
                        f"{sphere.pos_z}\t{sphere.radius}\n")
         
-        spheres_list_output = [
-            {
-                "radius": s.radius,
-                "x_position_m": s.pos_x - border*vox_size_xy,
-                "y_position_m": s.pos_y - border*vox_size_xy,
-                "z_position_m": s.pos_z
-            }
-            for s in liste_spheres
-        ]
-        
         # Insert spheres in volume
         print("  - Inserting spheres in volume...")
         for i, sphere in enumerate(liste_spheres):
@@ -746,17 +700,19 @@ def simulate_sphere_random(config, dirs):
             # Create illumination field
             ecart_type_bruit = ((config['noise_std_max'] - config['noise_std_min']) * rnd.random() +
                                config['noise_std_min'])
+            
             cp_field_plane = create_illumination_field(
-                field_size_xy_pix=holo_size_xy_w_b,
-                wavelength=wavelength,
-                pixel_size=vox_size_xy,
-                medium_index=index_milieu,
-                number_of_sources=1,
-                sources_angle_degree_X=[angle_X],
-                sources_angle_degree_Y=[angle_Y],
-                noise_mean=config['illumination_mean'],
-                noise_std=ecart_type_bruit
-            )
+                            field_size_xy_pix=holo_size_xy_w_b,
+                            wavelength=wavelength,
+                            pixel_size=pix_size,
+                            medium_index=index_milieu,
+                            magnification=grossissement,
+                            number_of_sources=1,
+                            sources_angle_degree_X=[angle_X],
+                            sources_angle_degree_Y=[angle_Y],
+                            noise_mean=config['illumination_mean'],
+                            noise_std=ecart_type_bruit
+                        )
             
             # Propagation
             print("  - Propagating hologram...")
@@ -797,6 +753,7 @@ def simulate_sphere_random(config, dirs):
             )
             
             print(f"    ✓ Illumination {src_idx+1} complete (id={holo_id})")
+        
         print(f"  ✓ Hologram set {n} complete ({config['number_of_sources']} illuminations)")
 
 
@@ -846,19 +803,6 @@ def simulate_sphere_list(config, dirs):
     d_fft_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
     d_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.float32)
     d_KERNEL = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
-    
-    parameters = {
-        'holo_size_x': holo_size_xy,
-        'holo_size_y': holo_size_xy,
-        'holo_plane_number': z_size,
-        'medium_index': index_milieu,
-        'object_index': index_objet,
-        'pix_size_cam': pix_size,
-        'magnification_cam': grossissement,
-        'Z_step': vox_size_z,
-        'illumination_wavelength': wavelength,
-        'medium_wavelength': lambda_milieu
-    }
     
     rnd = np.random.default_rng()
     
@@ -930,11 +874,13 @@ def simulate_sphere_list(config, dirs):
             # Create illumination field
             ecart_type_bruit = ((config['noise_std_max'] - config['noise_std_min']) * rnd.random() +
                                config['noise_std_min'])
+            
             cp_field_plane = create_illumination_field(
                 field_size_xy_pix=holo_size_xy_w_b,
                 wavelength=wavelength,
-                pixel_size=vox_size_xy,
+                pixel_size=pix_size,
                 medium_index=index_milieu,
+                magnification=grossissement,
                 number_of_sources=1,
                 sources_angle_degree_X=[angle_X],
                 sources_angle_degree_Y=[angle_Y],
@@ -1043,13 +989,6 @@ Examples:
     for _i in range(config['number_of_sources']):
         print(f"  Source {_i+1}: angle_X={config['sources_angle_degree_X'][_i]:.2f}°  angle_Y={config['sources_angle_degree_Y'][_i]:.2f}°")
     
-    if 'bacteria' in config['mode']:
-        print(f"Number of bacteria per hologram: {config['nb_objects']}")
-        print(f"Bacteria length: {config['length_min']*1e6:.2f} - {config['length_max']*1e6:.2f} µm")
-        print(f"Bacteria thickness: {config['thickness_min']*1e6:.3f} - {config['thickness_max']*1e6:.3f} µm")
-    elif 'sphere' in config['mode']:
-        print(f"Number of spheres per hologram: {config['nb_objects']}")
-        print(f"Sphere radius: {config['radius_min']*1e6:.3f} - {config['radius_max']*1e6:.3f} µm")
     print("="*80 + "\n")
     
     # Run simulation based on mode

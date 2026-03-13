@@ -17,6 +17,7 @@ def create_config(
     holo_size_xy=1024,
     border=256,
     z_size=200,
+    z_step=0.5e-6,
     length_min=3.0e-6,
     length_max=4.0e-6,
     thickness_min=1.0e-6,
@@ -79,6 +80,7 @@ def create_config(
         "border": border,
         "upscale_factor": kwargs.get('upscale_factor', 2),
         "z_size": z_size,
+        "z_step": z_step
     }
     
     # Add bacteria parameters if relevant

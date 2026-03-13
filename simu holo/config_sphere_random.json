@@ -9,6 +9,7 @@
     "border": 512,
     "upscale_factor": 1,
     "z_size": 200,
+    "z_step": 0.5e-6,
     
     "radius_min": 0.5e-6,
     "radius_max": 2.0e-6,
@@ -22,6 +23,9 @@
     "illumination_mean": 1.0,
     "noise_std_min": 0.01,
     "noise_std_max": 0.1,
+    "number_of_sources": 3,
+    "sources_angle_degree_X": [0.0, 5.0, -5.0],
+    "sources_angle_degree_Y": [0.0, 0.0, 0.0],
     
     "distance_volume_camera": 0.01,
     
