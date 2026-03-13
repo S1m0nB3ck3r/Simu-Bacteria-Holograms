@@ -4,6 +4,7 @@ simu_bact_liste/
 simu_spheres/
 biblio/
 wandb/
+output/
 *.pyc
 *.pyo
 *.npy
