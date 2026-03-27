@@ -30,6 +30,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 import numpy as np
 import cupy as cp
 from cupyx import jit
+from cupyx.scipy.ndimage import gaussian_filter as cp_gaussian_filter
+from scipy.ndimage import distance_transform_edt as scipy_distance_transform_edt
 import math
 import matplotlib.pyplot as plt
 import tifffile  
@@ -133,42 +135,27 @@ def gen_random_sphere(number_of_sphere: int, xyz_min_max: list, radius_min_max: 
         
         return list_bact
 
-def phase_correction(cplx_plane, shift_plane):
-
-    phase = cp.angle(cplx_plane)
-    module = cp.sqrt(cp.real(cplx_plane) ** 2 + cp.imag(cplx_plane) ** 2)
-
-    phase = phase + shift_plane
-
-    return module * cp.exp((0+1.j) * phase)
-
 def phase_shift_through_plane(mask_plane :cp, plane_to_shift: cp, shift_in_env: float, shift_in_obj: float):
 
-    # shift_plane = cp.full(fill_value=shift_in_env, dtype=cp.float32, shape=mask_plane.shape)
-    shift_plane = mask_plane * shift_in_obj
+    # Interpolation linéaire : masque lissé (0→1) donne un déphasage gradué
+    # Pour masque binaire : résultat identique à l'ancien code
+    # Pour masque lissé  : transition douce du déphasage (anti-aliasing)
+    mask_f32 = mask_plane.astype(cp.float32)
+    shift_plane = mask_f32 * shift_in_obj
 
-    cp.putmask(a=shift_plane, mask=mask_plane, values=shift_in_obj)
+    return plane_to_shift * cp.exp(1j * shift_plane)
 
-    return phase_correction(plane_to_shift, shift_plane)
-
-def attenuation_and_phase_correction(d_cplx_plane, d_shift_plane, d_transmission_plane):
-
-    phase_plane = cp.angle(d_cplx_plane)
-    module = cp.sqrt(cp.real(d_cplx_plane) ** 2 + cp.imag(d_cplx_plane) ** 2)
-
-    phase_plane = phase_plane + d_shift_plane
-
-    return module* d_transmission_plane * cp.exp((0+1.j) * phase_plane)
 
 def cross_through_plane(mask_plane :cp, plane_to_shift: cp, shift_in_env: float, shift_in_obj: float, transmission_in_obj: float):
 
-    shift_plane = cp.full(fill_value=shift_in_env, dtype=cp.float32, shape=mask_plane.shape)
-    transmission_plane = cp.full(fill_value=1.0, dtype=cp.float32, shape=mask_plane.shape)
+    # Interpolation linéaire basée sur la valeur du masque (0→1)
+    # Pour masque binaire : résultat identique à l'ancien code
+    # Pour masque lissé  : transition douce (anti-aliasing)
+    mask_f32 = mask_plane.astype(cp.float32)
+    shift_plane = mask_f32 * shift_in_obj
+    transmission_plane = 1.0 - (mask_f32 * transmission_in_obj)
 
-    cp.putmask(a=shift_plane, mask=mask_plane, values=shift_in_obj)
-    cp.putmask(a=transmission_plane, mask=mask_plane, values=transmission_in_obj)
-
-    return attenuation_and_phase_correction(plane_to_shift, shift_plane, transmission_plane)
+    return plane_to_shift * transmission_plane * cp.exp(1j * shift_plane)
 
 def insert_bact_in_mask_volume(mask_volume: np, bact: Bacterie, vox_size_xy: float, vox_size_z: float):
     
@@ -510,8 +497,8 @@ def create_illumination_field(field_size_xy_pix: int, wavelength: float, pixel_s
     effective_pixel_size = pixel_size / magnification
 
     center = field_size_xy_pix // 2
-    x = (cp.arange(field_size_xy_pix) - center) * effective_pixel_size
-    y = (cp.arange(field_size_xy_pix) - center) * effective_pixel_size
+    x = (center - cp.arange(field_size_xy_pix)) * effective_pixel_size
+    y = (center - cp.arange(field_size_xy_pix)) * effective_pixel_size
     X, Y = cp.meshgrid(x, y, indexing='ij')
 
     # Vecteur d'onde dans le milieu
@@ -543,6 +530,134 @@ def create_illumination_field(field_size_xy_pix: int, wavelength: float, pixel_s
     field = field * amplitude_noise
 
     return field
+
+
+def create_illumination_field_polar(
+    field_size_xy_pix: int,
+    wavelength: float,
+    pixel_size: float,
+    medium_index: float,
+    magnification: float,
+    number_of_sources: int,
+    sources_polar_degree: list[float],   # angle polaire
+    sources_azimuth_degree: list[float],     # azimut
+    noise_mean: float = 1.0,
+    noise_std: float = 0.05
+) -> cp.ndarray:
+
+    effective_pixel_size = pixel_size / magnification
+
+    center = field_size_xy_pix // 2
+    x = (center - cp.arange(field_size_xy_pix)) * effective_pixel_size
+    y = (center - cp.arange(field_size_xy_pix)) * effective_pixel_size
+    X, Y = cp.meshgrid(x, y, indexing='ij')
+
+    lambda_medium = wavelength / medium_index
+    k0 = 2.0 * math.pi / lambda_medium
+
+    field = cp.zeros((field_size_xy_pix, field_size_xy_pix), dtype=cp.complex64)
+
+    for i in range(number_of_sources):
+
+        polar_rad = math.radians(sources_polar_degree[i])
+        azimuth_rad = math.radians(sources_azimuth_degree[i])
+
+        # Décomposition correcte du vecteur d’onde
+        kx = k0 * math.sin(polar_rad) * math.cos(azimuth_rad)
+        ky = k0 * math.sin(polar_rad) * math.sin(azimuth_rad)
+
+        random_phase = 2 * math.pi * np.random.random()
+
+        plane_wave = cp.exp(1j * (kx * X + ky * Y + random_phase))
+        field += plane_wave
+
+    field /= number_of_sources
+
+    amplitude_noise = cp.asarray(
+        np.abs(np.random.normal(noise_mean, noise_std,
+        (field_size_xy_pix, field_size_xy_pix)))
+    ).astype(cp.float32)
+
+    field *= amplitude_noise
+
+    return field
+
+def smooth_volume_gaussian_gpu(cp_mask_volume, sigma=0.5):
+    """
+    Lisse un volume CuPy 3D par filtre gaussien sur GPU.
+    Réduit l'aliasing des bords voxelisés lors de la propagation angulaire.
+
+    Args:
+        cp_mask_volume: volume CuPy 3D (float16 ou float32)
+        sigma: écart-type du filtre gaussien en voxels (défaut=0.5)
+               Plus sigma est grand, plus le lissage est fort.
+               Valeurs recommandées : 0.3 (angle faible) à 0.8 (angle fort)
+
+    Returns:
+        volume lissé CuPy (float32)
+    """
+    vol = cp_mask_volume.astype(cp.float32)
+    smoothed = cp_gaussian_filter(vol, sigma=sigma)
+    # Clamp entre 0 et 1 pour rester cohérent avec un masque
+    smoothed = cp.clip(smoothed, 0.0, 1.0)
+    print(f"    [Smoothing] Gaussien GPU appliqué (sigma={sigma})")
+    return smoothed
+
+
+def smooth_volume_sdf_gpu(cp_mask_volume, sdf_width=1.0):
+    """
+    Lisse un volume CuPy 3D par Signed Distance Field (SDF).
+    Préserve mieux la géométrie que le filtre gaussien.
+    Le calcul de la distance se fait sur CPU (scipy), puis la sigmoïde sur GPU.
+
+    Args:
+        cp_mask_volume: volume CuPy 3D (float16 ou float32)
+        sdf_width: largeur de la transition douce en voxels (défaut=1.0)
+                   Plus sdf_width est grand, plus la transition est douce.
+                   Valeurs recommandées : 0.5 (peu de lissage) à 2.0 (fort lissage)
+
+    Returns:
+        volume lissé CuPy (float32)
+    """
+    # Transfert CPU pour distance_transform_edt (non dispo sur GPU)
+    vol_np = cp.asnumpy(cp_mask_volume.astype(cp.float32))
+    binary = vol_np > 0.5
+
+    dist_inside = scipy_distance_transform_edt(binary)
+    dist_outside = scipy_distance_transform_edt(~binary)
+
+    # SDF signé : positif à l'intérieur, négatif à l'extérieur
+    sdf_np = dist_inside - dist_outside
+
+    # Retour GPU pour la sigmoïde
+    sdf_gpu = cp.asarray(sdf_np, dtype=cp.float32)
+    smoothed = 1.0 / (1.0 + cp.exp(-sdf_gpu / sdf_width))
+
+    print(f"    [Smoothing] SDF appliqué (sdf_width={sdf_width})")
+    return smoothed
+
+
+def smooth_volume_gpu(cp_mask_volume, method='gaussian', sigma=0.5, sdf_width=1.0):
+    """
+    Lisse un volume CuPy 3D pour réduire l'aliasing des bords voxelisés.
+    Dispatche vers la méthode choisie (gaussien GPU ou SDF).
+
+    Args:
+        cp_mask_volume: volume CuPy 3D (float16 ou float32)
+        method: 'gaussian' ou 'sdf'
+        sigma: paramètre du filtre gaussien (voxels)
+        sdf_width: largeur de transition SDF (voxels)
+
+    Returns:
+        volume lissé CuPy (float32)
+    """
+    if method == 'gaussian':
+        return smooth_volume_gaussian_gpu(cp_mask_volume, sigma=sigma)
+    elif method == 'sdf':
+        return smooth_volume_sdf_gpu(cp_mask_volume, sdf_width=sdf_width)
+    else:
+        raise ValueError(f"Méthode de lissage inconnue : '{method}'. Utiliser 'gaussian' ou 'sdf'.")
+
 
 def display_complex_plane(complex_plane, title: str = ""):
     """

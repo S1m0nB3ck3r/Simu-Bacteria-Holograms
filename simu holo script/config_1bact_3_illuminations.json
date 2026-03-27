@@ -1,5 +1,5 @@
 {
-    "output_dir": "./output/bacteria_list_1bact_3illuminations",
+    "output_dir": "C:/Users/becker14/Documents/test_SIMU_GUI",
     "mode": "bacteria_list",
     "nb_holo": 1,
     
@@ -12,21 +12,25 @@
     "pix_size": 5.5e-6,
     "magnification": 40.0,
     "index_medium": 1.33,
-    "index_object": 1.335,
+    "index_object": 1.35,
     "wavelength": 660e-9,
     
     "illumination_mean": 10.0,
     "noise_std_min": 0.01,
     "noise_std_max": 0.1,
-    "number_of_sources_": 1,
-    "sources_angle_degree_X_": [0.0],
-    "sources_angle_degree_Y_": [0.0],
 
     "number_of_sources": 3,
-    "sources_angle_degree_X": [0.0, 0.05, 0.03],
-    "sources_angle_degree_Y": [0.0, 0.0, 0.05],
+    "sources_angle_azimuth": [0.0, 120.0, 240.0],
+    "sources_angle_polar": [2.0, 2.0, 2.0],
     
-    "distance_volume_camera": 10e-6,
+    "distance_volume_camera": 0.0,
+
+    "volume_smoothing": {
+        "enabled": false,
+        "method": "gaussian",
+        "sigma": 0.5,
+        "sdf_width": 1.0
+    },
     
     "save_options": {
         "hologram_bmp": true,
@@ -41,8 +45,8 @@
     
     "bacteria": [
         {
-            "pos_x": 3.52e-5,
-            "pos_y": 3.52e-5,
+            "pos_x": 7.0e-5,
+            "pos_y": 7.0e-5,
             "pos_z": 5.0e-5,
             "length": 3.0e-6,
             "thickness": 1.0e-6,

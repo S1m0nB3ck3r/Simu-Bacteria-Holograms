@@ -147,8 +147,8 @@ def d_calc_kernel_angular_spectrum_jit(d_KERNEL, lambda_milieu, magnification, p
     index = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
     sizeXY = nb_pix_X * nb_pix_Y
 
-    jj = index // nb_pix_X
-    ii = index - jj * nb_pix_X
+    jj = cp.uint32(index // nb_pix_X)
+    ii = cp.uint32(index - jj * nb_pix_X)
 
     if (ii < nb_pix_X and jj < nb_pix_Y):
         du = magnification / (pixSize * cp.float32(nb_pix_X))

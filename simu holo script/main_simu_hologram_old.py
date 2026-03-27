@@ -76,6 +76,12 @@ def validate_config(config):
         'sources_angle_degree_X': [0.0],
         'sources_angle_degree_Y': [0.0],
         'distance_volume_camera': 0.01,
+        'volume_smoothing': {
+            'enabled': False,
+            'method': 'gaussian',
+            'sigma': 0.5,
+            'sdf_width': 1.0
+        },
         'save_options': {
             'hologram_bmp': True,
             'hologram_tiff': False,
@@ -133,7 +139,7 @@ def angle_to_str(angle: float) -> str:
     """Convert angle float to filename-safe string (no dot, no minus sign).
     Example: -5.0 -> 'm5p0', 5.0 -> '5p0', 0.0 -> '0p0'
     """
-    return f"{angle:.1f}".replace('-', 'm').replace('.', 'p')
+    return f"{angle:.2f}".replace('-', 'm').replace('.', 'p')
 
 
 def load_bacteria_list_from_file(filepath):
@@ -382,7 +388,18 @@ def simulate_bacteria_random(config, dirs):
             holo_size_xy, upscale_factor, holo_size_xy, upscale_factor, z_size
         ).mean(axis=(1, 3))
         
+        # Segmentation binaire AVANT lissage (vérité terrain)
         bool_volume_mask = cp.asnumpy(cp_mask_volume > 0.0)
+        
+        # Lissage du volume pour réduire l'aliasing des bords voxelisés
+        smoothing_cfg = config.get('volume_smoothing', {})
+        if smoothing_cfg.get('enabled', False):
+            cp_mask_volume = smooth_volume_gpu(
+                cp_mask_volume,
+                method=smoothing_cfg.get('method', 'gaussian'),
+                sigma=smoothing_cfg.get('sigma', 0.5),
+                sdf_width=smoothing_cfg.get('sdf_width', 1.0)
+            )
         
         # Loop over illumination sources (1 hologram per source)
         for src_idx in range(config['number_of_sources']):
@@ -504,7 +521,7 @@ def simulate_bacteria_list(config, dirs):
     bacteria_list_config = config.get('bacteria', [])
     if not bacteria_list_config:
         print("ERROR: No bacteria defined in config['bacteria']")
-        return
+        # return
     
     for n in range(nb_holo_to_simulate):
         print(f"\n[{n+1}/{nb_holo_to_simulate}] Generating hologram set {n} from bacteria list...")
@@ -551,7 +568,18 @@ def simulate_bacteria_list(config, dirs):
             holo_size_xy, upscale_factor, holo_size_xy, upscale_factor, z_size
         ).mean(axis=(1, 3))
         
+        # Segmentation binaire AVANT lissage (vérité terrain)
         bool_volume_mask = cp.asnumpy(cp_mask_volume > 0.0)
+        
+        # Lissage du volume pour réduire l'aliasing des bords voxelisés
+        smoothing_cfg = config.get('volume_smoothing', {})
+        if smoothing_cfg.get('enabled', False):
+            cp_mask_volume = smooth_volume_gpu(
+                cp_mask_volume,
+                method=smoothing_cfg.get('method', 'gaussian'),
+                sigma=smoothing_cfg.get('sigma', 0.5),
+                sdf_width=smoothing_cfg.get('sdf_width', 1.0)
+            )
         
         # Loop over illumination sources (1 hologram per source)
         for src_idx in range(config['number_of_sources']):
@@ -732,7 +760,18 @@ def simulate_sphere_random(config, dirs):
             holo_size_xy, upscale_factor, holo_size_xy, upscale_factor, z_size
         ).mean(axis=(1, 3))
         
+        # Segmentation binaire AVANT lissage (vérité terrain)
         bool_volume_mask = cp.asnumpy(cp_mask_volume > 0.0)
+        
+        # Lissage du volume pour réduire l'aliasing des bords voxelisés
+        smoothing_cfg = config.get('volume_smoothing', {})
+        if smoothing_cfg.get('enabled', False):
+            cp_mask_volume = smooth_volume_gpu(
+                cp_mask_volume,
+                method=smoothing_cfg.get('method', 'gaussian'),
+                sigma=smoothing_cfg.get('sigma', 0.5),
+                sdf_width=smoothing_cfg.get('sdf_width', 1.0)
+            )
         
         # Loop over illumination sources (1 hologram per source)
         for src_idx in range(config['number_of_sources']):
@@ -916,7 +955,18 @@ def simulate_sphere_list(config, dirs):
             holo_size_xy, upscale_factor, holo_size_xy, upscale_factor, z_size
         ).mean(axis=(1, 3))
         
+        # Segmentation binaire AVANT lissage (vérité terrain)
         bool_volume_mask = cp.asnumpy(cp_mask_volume > 0.0)
+        
+        # Lissage du volume pour réduire l'aliasing des bords voxelisés
+        smoothing_cfg = config.get('volume_smoothing', {})
+        if smoothing_cfg.get('enabled', False):
+            cp_mask_volume = smooth_volume_gpu(
+                cp_mask_volume,
+                method=smoothing_cfg.get('method', 'gaussian'),
+                sigma=smoothing_cfg.get('sigma', 0.5),
+                sdf_width=smoothing_cfg.get('sdf_width', 1.0)
+            )
         
         # Loop over illumination sources (1 hologram per source)
         for src_idx in range(config['number_of_sources']):
@@ -1042,6 +1092,12 @@ Examples:
     print(f"Illumination sources: {config['number_of_sources']}")
     for _i in range(config['number_of_sources']):
         print(f"  Source {_i+1}: angle_X={config['sources_angle_degree_X'][_i]:.2f}°  angle_Y={config['sources_angle_degree_Y'][_i]:.2f}°")
+    
+    smoothing = config.get('volume_smoothing', {})
+    if smoothing.get('enabled', False):
+        print(f"Volume smoothing: {smoothing['method']} (sigma={smoothing.get('sigma', 0.5)}, sdf_width={smoothing.get('sdf_width', 1.0)})")
+    else:
+        print(f"Volume smoothing: disabled")
     
     if 'bacteria' in config['mode']:
         print(f"Number of bacteria per hologram: {config['nb_objects']}")

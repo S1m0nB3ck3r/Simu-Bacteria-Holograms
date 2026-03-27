@@ -1,0 +1,15 @@
+{
+  "output_dir": "C:/Users/becker14/Documents/test_SIMU_GUI\\2026_03_20_11_03_47",
+  "number_of_holograms": 1,
+  "files": [
+    "Hologramme BMP : C:/Users/becker14/Documents/test_SIMU_GUI\\2026_03_20_11_03_47\\simulated_hologram\\holo_0.bmp",
+    "Hologramme TIFF : C:/Users/becker14/Documents/test_SIMU_GUI\\2026_03_20_11_03_47\\simulated_hologram\\holo_0.tiff",
+    "Hologramme NPY : C:/Users/becker14/Documents/test_SIMU_GUI\\2026_03_20_11_03_47\\simulated_hologram\\holo_0.npy",
+    "Volume propag\u00e9 TIFF : C:/Users/becker14/Documents/test_SIMU_GUI\\2026_03_20_11_03_47\\hologram_volume\\intensity_volume_0.tiff",
+    "Volume propag\u00e9 NPY : C:/Users/becker14/Documents/test_SIMU_GUI\\2026_03_20_11_03_47\\hologram_volume\\intensity_volume_0.npy",
+    "Volume segmentation TIFF : C:/Users/becker14/Documents/test_SIMU_GUI\\2026_03_20_11_03_47\\binary_volume\\bin_volume_0.tiff",
+    "Volume segmentation NPY : C:/Users/becker14/Documents/test_SIMU_GUI\\2026_03_20_11_03_47\\binary_volume\\bin_volume_0.npy",
+    "Positions CSV : C:/Users/becker14/Documents/test_SIMU_GUI\\2026_03_20_11_03_47\\object_positions\\bact_0.csv",
+    "Positions TXT : C:/Users/becker14/Documents/test_SIMU_GUI\\2026_03_20_11_03_47\\object_positions\\bact_0.txt"
+  ]
+}
