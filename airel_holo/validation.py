@@ -1,20 +1,5 @@
 """
 validation.py
-
-
-Two distinct purposes:
-
-  validate_patches()             — (patch → logits → loss)
-                                   fast, run every epoch, drives scheduler
-
-  validate_fullvol_objectlevel() — biological metric (did we find the bacteria?)
-                                   expensive, run every N epochs
-                                   NO loss computation: stitched probs → binary mask → object F1
-
-Helpers:
-  sliding_window_predict_full_volume()
-  _centers_from_3d_mask()
-  _match_counts_by_radius()
 """
 
 import os
