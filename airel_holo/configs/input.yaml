@@ -1,0 +1,34 @@
+# --- Dataset identity ---
+holo_plane_number: 10      # number of Z planes reconstructed
+bact_numb: 20               # number of bacteria per hologram
+
+# --- Override paths (leave empty → auto-built from holo_type) ---
+
+HOLO_DIR_TRAIN: "../Z10/20b/data_split/train/simulated_hologram"
+BIN_DIR_TRAIN:  "../Z10/20b/data_split/train/binary_volume"
+HOLO_DIR_VAL:   "../Z10/20b/data_split/val/simulated_hologram"
+BIN_DIR_VAL:    "../Z10/20b/data_split/val/binary_volume"
+cache_root:     "../Z10/20b/cache_simon_fixed"
+
+
+# --- Patch extraction ---
+patch_xy: 128
+patch_z:  8
+
+# --- Intelligent sampling ---
+samples_per_epoch: 10000
+pos_fraction:      0.7      # fraction centered on a bacterium
+hardneg_fraction:  0.2      # fraction near-but-offset
+
+# --- Physics (ASP reconstruction) ---
+medium_wavelength: 6.6e-7   # meters
+pix_size_cam:      1.375e-7  # meters/pixel
+Z_step:            5.0e-7   # meters per Z plane
+
+# --- Augmentation ---
+aug_flips:     true    # random X/Y/Z flips (always recommended)
+aug_rotation:  false   # random 90° rotations in XY plane
+aug_intensity: false   # random scaling + gaussian noise
+aug_noise_std: 0.05    # noise standard deviation (vol is z-score normalized so 0.05 = small)
+aug_scale_min: 0.8     # intensity scale range min
+aug_scale_max: 1.2     # intensity scale range max

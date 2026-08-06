@@ -1,0 +1,7 @@
+# Transfer Learning configuration.
+# Set TL: true to load a pretrained checkpoint before training.
+# The source checkpoint path is built as:
+#   512_512_{plane_TL}_{Nb_TL}b/checkpoints/simon_unet3d_fixed_best.pt
+
+TL:       false   # enable transfer learning
+pretrained_ckpt: ""    # e.g. "/data/liudmyla/simon/Z100/10b/checkpoints/baseline/best.pt"
