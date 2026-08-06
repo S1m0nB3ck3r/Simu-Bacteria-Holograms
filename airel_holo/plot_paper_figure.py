@@ -1,23 +1,6 @@
 """
 plot_paper_figure.py
-=====================
-Publication figures for bacteria detection in holographic volumes.
 
-DEFAULT MODE (single run):
-    python3.10 plot_paper_figure.py \
-        --arch    configs/architecture_baseline_Z100.yaml \
-        --input   configs/input_test_Z100.yaml \
-        --out_dir paper_fig_z100
-
-    Saves:
-        fig_a_{run}.png          -- hologram + TP/FP/FN circles + inset crops
-        fig_b_{run}.png          -- TP/FP/FN bar chart per volume
-        fig_c_{run}.png          -- predicted vs GT count scatter
-        fig_d_loss_{run}.png     -- training/val loss curves
-        fig_d_dice_{run}.png     -- training/val dice curves
-        fig_d_objF1_{run}.png    -- object-level F1 vs epoch
-
-ALL MODE (compare across Z depths):
     python3.10 plot_paper_figure.py \
         --all \
         --configs \
