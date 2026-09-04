@@ -1,10 +1,12 @@
 __pycache__/
+simu holo script/simu_bacteria/
 simu_bact_random/
 simu_bact_liste/
 simu_spheres/
 biblio/
 wandb/
 output/
+archive/
 *.pyc
 *.pyo
 *.npy

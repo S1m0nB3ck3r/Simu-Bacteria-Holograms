@@ -77,8 +77,8 @@ NOISE_STD_MAX = 0.02       # Écart-type max du bruit
 
 # --- Sources d'illumination (3 ondes planes avec angles différents) ---
 NUMBER_OF_SOURCES = 3
-SOURCES_AZIMUTH = [0.0, 120.0, 240.0]  # Angles azimutaux (en degrés)
-SOURCES_POLAR   = [30.0, 30.0, 30.0]      # Angles polaires (en degrés)
+SOURCES_AZIMUTH = [0.0, 119.967, 240.033]  # Angles azimutaux (en degrés)
+SOURCES_POLAR   = [30.5073, 30.5442, 30.5442]      # Angles polaires (en degrés)
 
 # --- Distance volume-caméra (0 = au contact) ---
 DISTANCE_VOLUME_CAMERA = 0.0

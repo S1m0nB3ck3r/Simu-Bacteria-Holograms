@@ -342,54 +342,54 @@ def GPU_insert_bact_in_mask_volume(mask_volume, bact, vox_size_xy, vox_size_z):
         x_plane_size, y_plane_size, z_plane_size
     )
 
-def insert_sphere_in_mask_volume(mask_volume: np, sphere: Sphere, vox_size_xy: float, vox_size_z: float, upscale_factor: int = 1):
+def insert_sphere_in_mask_volume(mask_volume, sphere: Sphere, vox_size_xy: float, vox_size_z: float, upscale_factor: int = 1):
+    """
+    Insère une sphère dans le volume masque fourni.
 
-    x_size_upscaled = mask_volume.shape[0]*upscale_factor
-    y_size_upscaled = mask_volume.shape[1]*upscale_factor
+    Convention identique à GPU_insert_bact_in_mask_volume :
+      - mask_volume est le volume dans lequel on écrit (déjà sur-échantillonné
+        en XY si l'appelant le souhaite). Il ne contient PAS de border : le
+        cadre anti-aliasing est ajouté plus tard, plan par plan, par
+        pad_centered() au moment de la propagation, puis retiré au recadrage.
+      - vox_size_xy / vox_size_z sont les tailles de voxel DE CE VOLUME.
+      - les coordonnées de la sphère sont exprimées dans ce même repère,
+        c'est-à-dire dans le volume central.
 
-    #calcul de la box autour de la sphere (en m)
-    x_min = sphere.pos_x  - sphere.radius
-    x_max = sphere.pos_x  + sphere.radius
-    y_min = sphere.pos_y  - sphere.radius
-    y_max = sphere.pos_y  + sphere.radius
-    z_min = sphere.pos_z  - sphere.radius
-    z_max = sphere.pos_z  + sphere.radius
+    upscale_factor n'intervient plus dans le calcul des index : c'est à
+    l'appelant de fournir la taille de voxel correspondant au volume qu'il
+    passe (comme le fait déjà le chemin bactéries). Le paramètre est conservé
+    pour compatibilité d'appel.
 
-    #calcul des index correspondants 
-    i_x_min = int(upscale_factor * x_min / vox_size_xy)
-    i_x_max = int(math.ceil(upscale_factor * x_max / vox_size_xy))
-    i_y_min = int(upscale_factor * y_min / vox_size_xy)
-    i_y_max = int(math.ceil(upscale_factor * y_max / vox_size_xy))
-    i_z_min = int(z_min / vox_size_z)
-    i_z_max = int(math.ceil(z_max / vox_size_z))
+    Fonctionne indifféremment sur un tableau NumPy ou CuPy.
+    """
+    xp = cp.get_array_module(mask_volume)
 
-    i_x_min = max(0, i_x_min)
-    i_x_max = min(i_x_max, x_size_upscaled)
-    i_y_min = max(0, i_y_min)
-    i_y_max = min(i_y_max, y_size_upscaled)
-    i_z_min = max(0, i_z_min)
-    i_z_max = min(i_z_max, mask_volume.shape[2])
+    x_size, y_size, z_size = mask_volume.shape
 
-    for z in range(i_z_min, i_z_max):
+    # Box englobante de la sphère, en index de voxels
+    i_x_min = max(0,      int(math.floor((sphere.pos_x - sphere.radius) / vox_size_xy)))
+    i_x_max = min(x_size, int(math.ceil( (sphere.pos_x + sphere.radius) / vox_size_xy)) + 1)
+    i_y_min = max(0,      int(math.floor((sphere.pos_y - sphere.radius) / vox_size_xy)))
+    i_y_max = min(y_size, int(math.ceil( (sphere.pos_y + sphere.radius) / vox_size_xy)) + 1)
+    i_z_min = max(0,      int(math.floor((sphere.pos_z - sphere.radius) / vox_size_z)))
+    i_z_max = min(z_size, int(math.ceil( (sphere.pos_z + sphere.radius) / vox_size_z)) + 1)
 
-        plane = np.zeros(dtype = np.float16, shape= (x_size_upscaled, y_size_upscaled))
+    # Sphère entièrement hors du volume
+    if i_x_min >= i_x_max or i_y_min >= i_y_max or i_z_min >= i_z_max:
+        return mask_volume
 
-        for x in range(i_x_min, i_x_max):
-            for y in range(i_y_min, i_y_max):
+    # Distances au centre, calculées sur la seule box englobante
+    dx = xp.arange(i_x_min, i_x_max, dtype=xp.float32) * vox_size_xy - sphere.pos_x
+    dy = xp.arange(i_y_min, i_y_max, dtype=xp.float32) * vox_size_xy - sphere.pos_y
+    dz = xp.arange(i_z_min, i_z_max, dtype=xp.float32) * vox_size_z  - sphere.pos_z
 
-                #calcul de la position
-                pos_x = x * vox_size_xy / upscale_factor
-                pos_y = y * vox_size_xy / upscale_factor
-                pos_z = z * vox_size_z
+    inside = (dx[:, None, None] ** 2
+              + dy[None, :, None] ** 2
+              + dz[None, None, :] ** 2) < (sphere.radius ** 2)
 
-                #calcul de la distance de la position de la sphere avec le voxel
-                distance = np.sqrt((pos_x - sphere.pos_x)**2 + (pos_y - sphere.pos_y)**2 + (pos_z - sphere.pos_z)**2)
-                # print(distance)
-                if (distance < sphere.radius):
-                    plane[x,y] = 1.0
-
-        plane = plane.reshape(mask_volume.shape[0], upscale_factor, mask_volume.shape[1], upscale_factor)
-        mask_volume[:,:,z] = plane.mean(axis = (1,3))
+    # maximum() et non affectation directe : ne pas effacer les sphères déjà insérées
+    sub = (slice(i_x_min, i_x_max), slice(i_y_min, i_y_max), slice(i_z_min, i_z_max))
+    mask_volume[sub] = xp.maximum(mask_volume[sub], inside.astype(mask_volume.dtype))
 
     return mask_volume
 

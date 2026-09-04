@@ -58,6 +58,7 @@ def validate_config(config):
         'border': 256,
         'upscale_factor': 2,
         'z_size': 200,
+        'z_step': 0.5e-6,
         'length_min': 3.0e-6,
         'length_max': 4.0e-6,
         'thickness_min': 1.0e-6,
@@ -98,6 +99,24 @@ def validate_config(config):
         if key not in config:
             config[key] = default_value
     
+    # Compatibilite ascendante : l'ancienne convention cartesienne
+    # (sources_angle_degree_X/Y = inclinaisons selon X et Y) est convertie
+    # vers la convention canonique azimut / polaire.
+    if 'sources_angle_degree_X' in config or 'sources_angle_degree_Y' in config:
+        n_src = config['number_of_sources']
+        angles_x = config.get('sources_angle_degree_X', [0.0] * n_src)
+        angles_y = config.get('sources_angle_degree_Y', [0.0] * n_src)
+        polar, azimuth = [], []
+        for a_x, a_y in zip(angles_x, angles_y):
+            sin_x = math.sin(math.radians(a_x))
+            sin_y = math.sin(math.radians(a_y))
+            polar.append(math.degrees(math.asin(min(1.0, math.hypot(sin_x, sin_y)))))
+            azimuth.append(math.degrees(math.atan2(sin_y, sin_x)))
+        config['sources_angle_polar'] = polar
+        config['sources_angle_azimuth'] = azimuth
+        print("  [config] convention 'sources_angle_degree_X/Y' convertie en "
+              "'sources_angle_azimuth' / 'sources_angle_polar'")
+
     # Validate illumination source angles
     if len(config['sources_angle_azimuth']) != config['number_of_sources']:
         raise ValueError(f"sources_angle_azimuth must have {config['number_of_sources']} elements, "
@@ -271,104 +290,117 @@ def save_hologram_results(dirs, n, intensity_image,
     print(f"    ✓ Saved positions TXT: {positions_file}")
 
 
-def simulate_bacteria_random(config, dirs):
-    """Simulate random bacteria holograms"""
-    # Extract directories from dirs dictionary
+def simulate_bacteria(config, dirs):
+    """Simulate bacteria holograms, from a random draw or from a predefined list.
+
+    Modes pris en charge :
+      - 'bacteria_random' : bacteries tirees aleatoirement dans le volume central
+      - 'bacteria_list'   : bacteries decrites dans config['bacteria']
+
+    Seule la construction de la liste d'objets differe entre les deux modes ;
+    toute la chaine optique (volume, propagation, sauvegarde) est commune.
+    """
     chemin_positions = dirs['object_positions']
-    chemin_holograms = dirs['simulated_hologram']
-    chemin_data_holo = dirs['hologram_volume']
-    
-    print("\n" + "="*80)
-    print("SIMULATION: BACTERIA (RANDOM)")
-    print("="*80)
-    
+
+    from_list = (config['mode'] == 'bacteria_list')
+
+    print("\n" + "=" * 80)
+    print("SIMULATION: BACTERIA (FROM LIST)" if from_list else "SIMULATION: BACTERIA (RANDOM)")
+    print("=" * 80)
+
     # Parameters
-    nb_holo_to_simulate = config['nb_holo']
-    number_of_bacteria = config['nb_objects']
-    holo_size_xy = config['holo_size_xy']
-    border = config['border']
-    upscale_factor = config['upscale_factor']
-    z_size = config['z_size']
-    
-    # Bacteria parameters
-    longueur_min_max = {min: config['length_min'], max: config['length_max']}
-    epaisseur_min_max = {min: config['thickness_min'], max: config['thickness_max']}
-    
+    nb_holo_to_simulate = int(config['nb_holo'])
+    holo_size_xy = int(config['holo_size_xy'])
+    border = int(config['border'])
+    upscale_factor = int(config['upscale_factor'])
+    z_size = int(config['z_size'])
+
     # Optical parameters
     pix_size = config['pix_size']
     grossissement = config['magnification']
     index_milieu = config['index_medium']
     index_objet = config['index_object']
     wavelength = config['wavelength']
-    
+
     # Volume parameters
     holo_size_xy_w_b = holo_size_xy + border * 2
     vox_size_xy = pix_size / grossissement
-    vox_size_z = 100e-6 / z_size
+    vox_size_z = config['z_step']
     lambda_milieu = wavelength / index_milieu
-    
+
     volume_size = [holo_size_xy, holo_size_xy, z_size]
-    volume_size_w_b = [holo_size_xy_w_b, holo_size_xy_w_b, z_size]
     volume_size_upscaled = [holo_size_xy * upscale_factor, holo_size_xy * upscale_factor, z_size]
-    
+
     # Phase shift parameters
     shift_in_env = 0.0
     shift_in_obj = 2.0 * cp.pi * vox_size_z * (index_objet - index_milieu) / wavelength
-    
+
     # GPU allocations
     d_fft_holo = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
     d_fft_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
     d_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.float32)
     d_KERNEL = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
-    
-    parameters = {
-        'holo_size_x': holo_size_xy,
-        'holo_size_y': holo_size_xy,
-        'holo_plane_number': z_size,
-        'medium_index': index_milieu,
-        'object_index': index_objet,
-        'pix_size_cam': pix_size,
-        'magnification_cam': grossissement,
-        'Z_step': vox_size_z,
-        'illumination_wavelength': wavelength,
-        'medium_wavelength': lambda_milieu
-    }
-    
+
     rnd = np.random.default_rng()
-    
+
+    # Entrees specifiques au mode
+    if from_list:
+        bacteria_list_config = config.get('bacteria', [])
+        if not bacteria_list_config:
+            print("ERROR: No bacteria defined in config['bacteria']")
+            return
+    else:
+        number_of_bacteria = config['nb_objects']
+        longueur_min_max = {min: config['length_min'], max: config['length_max']}
+        epaisseur_min_max = {min: config['thickness_min'], max: config['thickness_max']}
+
     for n in range(nb_holo_to_simulate):
         print(f"\n[{n+1}/{nb_holo_to_simulate}] Generating hologram set {n}...")
-        
+
         positions_file = os.path.join(chemin_positions, f"bact_{n}.txt")
-        
+
         # Initialize volumes (once per n, shared across all illuminations)
-        cp_mask_volume = cp.full(shape=volume_size, fill_value=0, dtype=cp.float16)
-        cp_mask_volume_upscaled = cp.full(shape=volume_size_upscaled, fill_value=0, dtype=cp.float16)
-        
-        # Generate bacteria
-        print(f"  - Generating {number_of_bacteria} bacteria...")
-        liste_bacteries = gen_random_bacteria(
-            number_of_bact=number_of_bacteria,
-            xyz_min_max=[0, holo_size_xy * vox_size_xy,
-                        0, holo_size_xy * vox_size_xy,
-                        0, z_size * vox_size_z],
-            thickness_min_max=epaisseur_min_max,
-            length_min_max=longueur_min_max
-        )
-        
+        cp_mask_volume = cp.full(shape=volume_size, fill_value=0.0, dtype=cp.float16)
+        cp_mask_volume_upscaled = cp.full(shape=volume_size_upscaled, fill_value=0.0, dtype=cp.float16)
+
+        # Construction de la liste de bacteries
+        if from_list:
+            print(f"  - Creating {len(bacteria_list_config)} bacteria from list...")
+            liste_bacteries = [
+                Bacterie(
+                    pos_x=b['pos_x'], pos_y=b['pos_y'], pos_z=b['pos_z'],
+                    length=b['length'], thickness=b['thickness'],
+                    theta=b.get('theta', 0.0), phi=b.get('phi', 0.0)
+                )
+                for b in bacteria_list_config
+            ]
+        else:
+            print(f"  - Generating {number_of_bacteria} bacteria...")
+            liste_bacteries = gen_random_bacteria(
+                number_of_bact=number_of_bacteria,
+                xyz_min_max=[0, holo_size_xy * vox_size_xy,
+                             0, holo_size_xy * vox_size_xy,
+                             0, z_size * vox_size_z],
+                thickness_min_max=epaisseur_min_max,
+                length_min_max=longueur_min_max
+            )
+
         # Save bacteria positions (once per n, shared across all illuminations)
         print("  - Saving bacteria positions...")
-        for bact in liste_bacteries:
-            bact.to_file(positions_file)
-        
+        with open(positions_file, 'w') as f:
+            for bact in liste_bacteries:
+                f.write(f"{bact.pos_x}\t{bact.pos_y}\t{bact.pos_z}\t"
+                        f"{bact.length}\t{bact.thickness}\t{bact.theta}\t{bact.phi}\n")
+
         # Insert bacteria in volume
         print("  - Inserting bacteria in volume...")
         for i, bact in enumerate(liste_bacteries):
-            if (i + 1) % max(1, number_of_bacteria // 10) == 0:
-                print(f"    - {i+1}/{number_of_bacteria}")
-            GPU_insert_bact_in_mask_volume(cp_mask_volume_upscaled, bact, 
+            if (i + 1) % max(1, len(liste_bacteries) // 10) == 0:
+                print(f"    - {i+1}/{len(liste_bacteries)}")
+            GPU_insert_bact_in_mask_volume(cp_mask_volume_upscaled, bact,
                                           vox_size_xy / upscale_factor, vox_size_z)
-        
+
+
         # Flip Z axis
         cp_mask_volume_upscaled = cp.flip(cp_mask_volume_upscaled, axis=2)
         cp_mask_volume = cp_mask_volume_upscaled[:,:,:].reshape(
@@ -390,12 +422,12 @@ def simulate_bacteria_random(config, dirs):
         
         # Loop over illumination sources (1 hologram per source)
         for src_idx in range(config['number_of_sources']):
-            angle_X = config['sources_angle_degree_X'][src_idx]
-            angle_Y = config['sources_angle_degree_Y'][src_idx]
-            angle_suffix = f"_angleX{angle_to_str(angle_X)}_Y{angle_to_str(angle_Y)}"
+            angle_azimuth = config['sources_angle_azimuth'][src_idx]
+            angle_polar = config['sources_angle_polar'][src_idx]
+            angle_suffix = f"_az{angle_to_str(angle_azimuth)}_pol{angle_to_str(angle_polar)}"
             holo_id = f"{n}{angle_suffix}"
             
-            print(f"  - Source {src_idx+1}/{config['number_of_sources']}: angle_X={angle_X}° angle_Y={angle_Y}°")
+            print(f"  - Source {src_idx+1}/{config['number_of_sources']}: azimuth={angle_azimuth}° polar={angle_polar}°")
             
             # Create illumination field
             ecart_type_bruit = ((config['noise_std_max'] - config['noise_std_min']) * rnd.random() +
@@ -403,11 +435,12 @@ def simulate_bacteria_random(config, dirs):
             cp_field_plane = create_illumination_field_polar(
                 field_size_xy_pix=holo_size_xy_w_b,
                 wavelength=wavelength,
-                pixel_size=vox_size_xy,
+                pixel_size=pix_size,
+                magnification=grossissement,
                 medium_index=index_milieu,
                 number_of_sources=1,
-                sources_angle_azimuth=[angle_X],
-                sources_angle_polar=[angle_Y],
+                sources_azimuth_degree=[angle_azimuth],
+                sources_polar_degree=[angle_polar],
                 noise_mean=config['illumination_mean'],
                 noise_std=ecart_type_bruit
             )
@@ -457,98 +490,108 @@ def simulate_bacteria_random(config, dirs):
         print(f"  ✓ Hologram set {n} complete ({config['number_of_sources']} illuminations)")
 
 
-def simulate_bacteria_list(config, dirs):
-    """Simulate bacteria holograms from a predefined list"""
-    # Extract directories from dirs dictionary
+def simulate_sphere(config, dirs):
+    """Simulate sphere holograms, from a random draw or from a predefined list.
+
+    Modes pris en charge :
+      - 'sphere_random' : spheres tirees aleatoirement dans le volume central
+      - 'sphere_list'   : spheres decrites dans config['spheres']
+
+    Seule la construction de la liste d'objets differe entre les deux modes ;
+    toute la chaine optique (volume, propagation, sauvegarde) est commune.
+    """
     chemin_positions = dirs['object_positions']
-    chemin_holograms = dirs['simulated_hologram']
-    chemin_data_holo = dirs['hologram_volume']
-    
-    print("\n" + "="*80)
-    print("SIMULATION: BACTERIA (FROM LIST)")
-    print("="*80)
-    
+
+    from_list = (config['mode'] == 'sphere_list')
+
+    print("\n" + "=" * 80)
+    print("SIMULATION: SPHERES (FROM LIST)" if from_list else "SIMULATION: SPHERES (RANDOM)")
+    print("=" * 80)
+
     # Parameters
     nb_holo_to_simulate = int(config['nb_holo'])
     holo_size_xy = int(config['holo_size_xy'])
     border = int(config['border'])
     upscale_factor = int(config['upscale_factor'])
     z_size = int(config['z_size'])
-    
+
     # Optical parameters
     pix_size = config['pix_size']
     grossissement = config['magnification']
     index_milieu = config['index_medium']
     index_objet = config['index_object']
     wavelength = config['wavelength']
-    
+
     # Volume parameters
     holo_size_xy_w_b = holo_size_xy + border * 2
     vox_size_xy = pix_size / grossissement
-    vox_size_z = config['z_step']  # 0.5e-6
+    vox_size_z = config['z_step']
     lambda_milieu = wavelength / index_milieu
-    
+
     volume_size = [holo_size_xy, holo_size_xy, z_size]
-    volume_size_w_b = [holo_size_xy_w_b, holo_size_xy_w_b, z_size]
     volume_size_upscaled = [holo_size_xy * upscale_factor, holo_size_xy * upscale_factor, z_size]
-    
+
     # Phase shift parameters
     shift_in_env = 0.0
     shift_in_obj = 2.0 * cp.pi * vox_size_z * (index_objet - index_milieu) / wavelength
-    
+    transmission_obj = 0.0  # Spheres are opaque
+
     # GPU allocations
     d_fft_holo = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
     d_fft_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
     d_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.float32)
     d_KERNEL = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
-    
+
     rnd = np.random.default_rng()
-    
-    # Get bacteria from config
-    bacteria_list_config = config.get('bacteria', [])
-    if not bacteria_list_config:
-        print("ERROR: No bacteria defined in config['bacteria']")
-        # return
-    
+
+    # Entrees specifiques au mode
+    if from_list:
+        spheres_list_config = config.get('spheres', [])
+        if not spheres_list_config:
+            print("ERROR: No spheres defined in config['spheres']")
+            return
+    else:
+        number_of_spheres = config['nb_objects']
+        rayon_min_max = {min: config['radius_min'], max: config['radius_max']}
+        # Volume constraints - spheres inserted in central region
+        volume_min_max = [0, holo_size_xy * vox_size_xy,
+                          0, holo_size_xy * vox_size_xy,
+                          0, z_size * vox_size_z]
+
     for n in range(nb_holo_to_simulate):
-        print(f"\n[{n+1}/{nb_holo_to_simulate}] Generating hologram set {n} from bacteria list...")
-        
-        positions_file = os.path.join(chemin_positions, f"bact_{n}.txt")
-        
+        print(f"\n[{n+1}/{nb_holo_to_simulate}] Generating hologram set {n}...")
+
+        positions_file = os.path.join(chemin_positions, f"spheres_{n}.txt")
+
         # Initialize volumes (once per n, shared across all illuminations)
         cp_mask_volume = cp.full(shape=volume_size, fill_value=0.0, dtype=cp.float16)
         cp_mask_volume_upscaled = cp.full(shape=volume_size_upscaled, fill_value=0.0, dtype=cp.float16)
-        
-        # Create bacteria from list config
-        print(f"  - Creating {len(bacteria_list_config)} bacteria from list...")
-        liste_bacteries = []
-        
-        for bact_config in bacteria_list_config:
-            bact = Bacterie(
-                pos_x=bact_config['pos_x'],
-                pos_y=bact_config['pos_y'],
-                pos_z=bact_config['pos_z'],
-                length=bact_config['length'],
-                thickness=bact_config['thickness'],
-                theta=bact_config.get('theta', 0.0),
-                phi=bact_config.get('phi', 0.0)
-            )
-            liste_bacteries.append(bact)
-        
-        # Save bacteria positions (once per n, shared across all illuminations)
-        print("  - Saving bacteria positions...")
+
+        # Construction de la liste de spheres
+        if from_list:
+            print(f"  - Creating {len(spheres_list_config)} spheres from list...")
+            liste_spheres = [
+                Sphere(pos_x=s['pos_x'], pos_y=s['pos_y'], pos_z=s['pos_z'], radius=s['radius'])
+                for s in spheres_list_config
+            ]
+        else:
+            print(f"  - Generating {number_of_spheres} random spheres...")
+            liste_spheres = gen_random_sphere(number_of_spheres, volume_min_max, rayon_min_max)
+
+        # Save sphere positions (once per n, shared across all illuminations)
+        print("  - Saving sphere positions...")
         with open(positions_file, 'w') as f:
-            for bact in liste_bacteries:
-                f.write(f"{bact_config['pos_x']}\t{bact_config['pos_y']}\t"
-                       f"{bact_config['pos_z']}\t{bact_config['length']}\t{bact_config['thickness']}\t"
-                       f"{bact_config['theta']}\t{bact_config['phi']}\n")
-        
-        # Insert bacteria in volume
-        print("  - Inserting bacteria in volume...")
-        for i, bact in enumerate(liste_bacteries):
-            GPU_insert_bact_in_mask_volume(cp_mask_volume_upscaled, bact, 
-                                          vox_size_xy / upscale_factor, vox_size_z)
-        
+            for sphere in liste_spheres:
+                f.write(f"{sphere.pos_x}\t{sphere.pos_y}\t"
+                       f"{sphere.pos_z}\t{sphere.radius}\n")
+
+        # Insert spheres in volume
+        print("  - Inserting spheres in volume...")
+        for i, sphere in enumerate(liste_spheres):
+            insert_sphere_in_mask_volume(cp_mask_volume_upscaled, sphere,
+                                        vox_size_xy / upscale_factor, vox_size_z, upscale_factor)
+
+
         # Flip Z axis
         cp_mask_volume_upscaled = cp.flip(cp_mask_volume_upscaled, axis=2)
         cp_mask_volume = cp_mask_volume_upscaled[:,:,:].reshape(
@@ -570,216 +613,25 @@ def simulate_bacteria_list(config, dirs):
         
         # Loop over illumination sources (1 hologram per source)
         for src_idx in range(config['number_of_sources']):
-            angle_X = config['sources_angle_degree_X'][src_idx]
-            angle_Y = config['sources_angle_degree_Y'][src_idx]
-            angle_suffix = f"_angleX{angle_to_str(angle_X)}_Y{angle_to_str(angle_Y)}"
+            angle_azimuth = config['sources_angle_azimuth'][src_idx]
+            angle_polar = config['sources_angle_polar'][src_idx]
+            angle_suffix = f"_az{angle_to_str(angle_azimuth)}_pol{angle_to_str(angle_polar)}"
             holo_id = f"{n}{angle_suffix}"
             
-            print(f"  - Source {src_idx+1}/{config['number_of_sources']}: angle_X={angle_X}° angle_Y={angle_Y}°")
+            print(f"  - Source {src_idx+1}/{config['number_of_sources']}: azimuth={angle_azimuth}° polar={angle_polar}°")
             
             # Create illumination field
             ecart_type_bruit = ((config['noise_std_max'] - config['noise_std_min']) * rnd.random() +
                                config['noise_std_min'])
-            cp_field_plane = create_illumination_field(
+            cp_field_plane = create_illumination_field_polar(
                 field_size_xy_pix=holo_size_xy_w_b,
                 wavelength=wavelength,
                 pixel_size=pix_size,
                 magnification=grossissement,
                 medium_index=index_milieu,
                 number_of_sources=1,
-                sources_angle_degree_X=[angle_X],
-                sources_angle_degree_Y=[angle_Y],
-                noise_mean=config['illumination_mean'],
-                noise_std=ecart_type_bruit
-            )
-            
-            # Propagation
-            print("  - Propagating hologram...")
-            for i in range(z_size):
-                cp_field_plane = propagation.propag_angular_spectrum(
-                    cp_field_plane, d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag,
-                    lambda_milieu, grossissement, pix_size, holo_size_xy_w_b, holo_size_xy_w_b, 
-                    vox_size_z, 0, 0
-                )
-                
-                cp_mask_plane_w_border = pad_centered(cp_mask_volume[:,:,i], 
-                                                      [holo_size_xy_w_b, holo_size_xy_w_b])
-                
-                cp_field_plane = phase_shift_through_plane(
-                    mask_plane=cp_mask_plane_w_border,
-                    plane_to_shift=cp_field_plane,
-                    shift_in_env=shift_in_env,
-                    shift_in_obj=shift_in_obj
-                )
-            
-            # Crop and save
-            cropped_field_plane = cp_field_plane[border:border+holo_size_xy, 
-                                                 border:border+holo_size_xy]
-            
-            intensity_image = cp.asnumpy(traitement_holo.intensite(cropped_field_plane))
-            
-            print("  - Saving results...")
-            save_hologram_results(
-                dirs, holo_id,
-                intensity_image,
-                cp.asnumpy(traitement_holo.intensite(cp_mask_volume.astype(cp.float32))),
-                bool_volume_mask,
-                liste_bacteries,
-                config.get('save_options', {}),
-                vox_size_xy, vox_size_z,
-                object_type='bacteria'
-            )
-            
-            print(f"    ✓ Illumination {src_idx+1} complete (id={holo_id})")
-        
-        print(f"  ✓ Hologram set {n} complete ({config['number_of_sources']} illuminations)")
-
-
-def simulate_sphere_random(config, dirs):
-    """Simulate random sphere holograms"""
-    # Extract directories from dirs dictionary
-    chemin_positions = dirs['object_positions']
-    chemin_holograms = dirs['simulated_hologram']
-    chemin_data_holo = dirs['hologram_volume']
-    
-    print("\n" + "="*80)
-    print("SIMULATION: SPHERES (RANDOM)")
-    print("="*80)
-    
-    # Parameters
-    nb_holo_to_simulate = config['nb_holo']
-    number_of_spheres = config['nb_objects']
-    holo_size_xy = config['holo_size_xy']
-    border = config['border']
-    upscale_factor = config['upscale_factor']
-    z_size = config['z_size']
-    
-    # Sphere parameters
-    rayon_min_max = {min: config['radius_min'], max: config['radius_max']}
-    
-    # Optical parameters
-    pix_size = config['pix_size']
-    grossissement = config['magnification']
-    index_milieu = config['index_medium']
-    index_objet = config['index_object']
-    wavelength = config['wavelength']
-    
-    # Volume parameters
-    holo_size_xy_w_b = holo_size_xy + border * 2
-    vox_size_xy = pix_size / grossissement
-    vox_size_z = 100e-6 / z_size
-    lambda_milieu = wavelength / index_milieu
-    
-    volume_size = [holo_size_xy, holo_size_xy, z_size]
-    volume_size_w_b = [holo_size_xy_w_b, holo_size_xy_w_b, z_size]
-    volume_size_upscaled = [holo_size_xy * upscale_factor, holo_size_xy * upscale_factor, z_size]
-    
-    # Phase shift parameters
-    shift_in_env = 0.0
-    shift_in_obj = 2.0 * cp.pi * vox_size_z * (index_objet - index_milieu) / wavelength
-    transmission_obj = 0.0  # Spheres are opaque
-    
-    # GPU allocations
-    d_fft_holo = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
-    d_fft_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
-    d_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.float32)
-    d_KERNEL = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
-    
-    parameters = {
-        'holo_size_x': holo_size_xy,
-        'holo_size_y': holo_size_xy,
-        'holo_plane_number': z_size,
-        'medium_index': index_milieu,
-        'object_index': index_objet,
-        'pix_size_cam': pix_size,
-        'magnification_cam': grossissement,
-        'Z_step': vox_size_z,
-        'illumination_wavelength': wavelength,
-        'medium_wavelength': lambda_milieu
-    }
-    
-    rnd = np.random.default_rng()
-    
-    # Volume constraints - spheres inserted in central region
-    volume_min_max = [border*vox_size_xy, (border+holo_size_xy)*vox_size_xy,
-                      border*vox_size_xy, (border+holo_size_xy)*vox_size_xy,
-                      0, z_size * vox_size_z]
-    
-    for n in range(nb_holo_to_simulate):
-        print(f"\n[{n+1}/{nb_holo_to_simulate}] Generating random sphere hologram set {n}...")
-        
-        positions_file = os.path.join(chemin_positions, f"spheres_{n}.txt")
-        
-        # Initialize volumes (once per n, shared across all illuminations)
-        cp_mask_volume = cp.full(shape=volume_size, fill_value=0, dtype=cp.float16)
-        cp_mask_volume_upscaled = cp.full(shape=volume_size_upscaled, fill_value=0, dtype=cp.float16)
-        
-        # Generate random spheres
-        print(f"  - Generating {number_of_spheres} random spheres...")
-        liste_spheres = gen_random_sphere(number_of_spheres, volume_min_max, rayon_min_max)
-        
-        # Save sphere positions (once per n, shared across all illuminations)
-        print("  - Saving sphere positions...")
-        with open(positions_file, 'w') as f:
-            for sphere in liste_spheres:
-                f.write(f"{sphere.pos_x - border*vox_size_xy}\t{sphere.pos_y - border*vox_size_xy}\t"
-                       f"{sphere.pos_z}\t{sphere.radius}\n")
-        
-        spheres_list_output = [
-            {
-                "radius": s.radius,
-                "x_position_m": s.pos_x - border*vox_size_xy,
-                "y_position_m": s.pos_y - border*vox_size_xy,
-                "z_position_m": s.pos_z
-            }
-            for s in liste_spheres
-        ]
-        
-        # Insert spheres in volume
-        print("  - Inserting spheres in volume...")
-        for i, sphere in enumerate(liste_spheres):
-            insert_sphere_in_mask_volume(cp_mask_volume_upscaled, sphere, 
-                                        vox_size_xy / upscale_factor, vox_size_z, upscale_factor)
-        
-        # Flip Z axis
-        cp_mask_volume_upscaled = cp.flip(cp_mask_volume_upscaled, axis=2)
-        cp_mask_volume = cp_mask_volume_upscaled[:,:,:].reshape(
-            holo_size_xy, upscale_factor, holo_size_xy, upscale_factor, z_size
-        ).mean(axis=(1, 3))
-        
-        # Segmentation binaire AVANT lissage (vérité terrain)
-        bool_volume_mask = cp.asnumpy(cp_mask_volume > 0.0)
-        
-        # Lissage du volume pour réduire l'aliasing des bords voxelisés
-        smoothing_cfg = config.get('volume_smoothing', {})
-        if smoothing_cfg.get('enabled', False):
-            cp_mask_volume = smooth_volume_gpu(
-                cp_mask_volume,
-                method=smoothing_cfg.get('method', 'gaussian'),
-                sigma=smoothing_cfg.get('sigma', 0.5),
-                sdf_width=smoothing_cfg.get('sdf_width', 1.0)
-            )
-        
-        # Loop over illumination sources (1 hologram per source)
-        for src_idx in range(config['number_of_sources']):
-            angle_X = config['sources_angle_degree_X'][src_idx]
-            angle_Y = config['sources_angle_degree_Y'][src_idx]
-            angle_suffix = f"_angleX{angle_to_str(angle_X)}_Y{angle_to_str(angle_Y)}"
-            holo_id = f"{n}{angle_suffix}"
-            
-            print(f"  - Source {src_idx+1}/{config['number_of_sources']}: angle_X={angle_X}° angle_Y={angle_Y}°")
-            
-            # Create illumination field
-            ecart_type_bruit = ((config['noise_std_max'] - config['noise_std_min']) * rnd.random() +
-                               config['noise_std_min'])
-            cp_field_plane = create_illumination_field(
-                field_size_xy_pix=holo_size_xy_w_b,
-                wavelength=wavelength,
-                pixel_size=vox_size_xy,
-                medium_index=index_milieu,
-                number_of_sources=1,
-                sources_angle_degree_X=[angle_X],
-                sources_angle_degree_Y=[angle_Y],
+                sources_azimuth_degree=[angle_azimuth],
+                sources_polar_degree=[angle_polar],
                 noise_mean=config['illumination_mean'],
                 noise_std=ecart_type_bruit
             )
@@ -823,202 +675,6 @@ def simulate_sphere_random(config, dirs):
             )
             
             print(f"    ✓ Illumination {src_idx+1} complete (id={holo_id})")
-        print(f"  ✓ Hologram set {n} complete ({config['number_of_sources']} illuminations)")
-
-
-def simulate_sphere_list(config, dirs):
-    """Simulate sphere holograms from a predefined list"""
-    # Extract directories from dirs dictionary
-    chemin_positions = dirs['object_positions']
-    chemin_holograms = dirs['simulated_hologram']
-    chemin_data_holo = dirs['hologram_volume']
-    
-    print("\n" + "="*80)
-    print("SIMULATION: SPHERES (FROM LIST)")
-    print("="*80)
-    
-    # Parameters
-    nb_holo_to_simulate = config['nb_holo']
-    holo_size_xy = config['holo_size_xy']
-    border = config['border']
-    upscale_factor = config['upscale_factor']
-    z_size = config['z_size']
-    z_step = config['z_step']
-    
-    # Optical parameters
-    pix_size = config['pix_size']
-    grossissement = config['magnification']
-    index_milieu = config['index_medium']
-    index_objet = config['index_object']
-    wavelength = config['wavelength']
-    
-    # Volume parameters
-    holo_size_xy_w_b = holo_size_xy + border * 2
-    vox_size_xy = pix_size / grossissement
-    vox_size_z = z_step
-    lambda_milieu = wavelength / index_milieu
-    
-    volume_size = [holo_size_xy, holo_size_xy, z_size]
-    volume_size_w_b = [holo_size_xy_w_b, holo_size_xy_w_b, z_size]
-    volume_size_upscaled = [holo_size_xy * upscale_factor, holo_size_xy * upscale_factor, z_size]
-    
-    # Phase shift parameters
-    shift_in_env = 0.0
-    shift_in_obj = 2.0 * cp.pi * vox_size_z * (index_objet - index_milieu) / wavelength
-    transmission_obj = 0.0  # Spheres are opaque
-    
-    # GPU allocations
-    d_fft_holo = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
-    d_fft_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
-    d_holo_propag = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.float32)
-    d_KERNEL = cp.zeros(shape=(holo_size_xy_w_b, holo_size_xy_w_b), dtype=cp.complex64)
-    
-    parameters = {
-        'holo_size_x': holo_size_xy,
-        'holo_size_y': holo_size_xy,
-        'holo_plane_number': z_size,
-        'medium_index': index_milieu,
-        'object_index': index_objet,
-        'pix_size_cam': pix_size,
-        'magnification_cam': grossissement,
-        'Z_step': vox_size_z,
-        'illumination_wavelength': wavelength,
-        'medium_wavelength': lambda_milieu
-    }
-    
-    rnd = np.random.default_rng()
-    
-    # Get spheres from config
-    spheres_list_config = config.get('spheres', [])
-    if not spheres_list_config:
-        print("ERROR: No spheres defined in config['spheres']")
-        return
-    
-    for n in range(nb_holo_to_simulate):
-        print(f"\n[{n+1}/{nb_holo_to_simulate}] Generating hologram set {n} from sphere list...")
-        
-        positions_file = os.path.join(chemin_positions, f"spheres_{n}.txt")
-        
-        # Initialize volumes (once per n, shared across all illuminations)
-        cp_mask_volume = cp.full(shape=volume_size, fill_value=0, dtype=cp.float16)
-        cp_mask_volume_upscaled = cp.full(shape=volume_size_upscaled, fill_value=0, dtype=cp.float16)
-        
-        # Create spheres from list config
-        print(f"  - Creating {len(spheres_list_config)} spheres from list...")
-        liste_spheres = []
-        spheres_list_output = []
-        
-        for sphere_config in spheres_list_config:
-            sphere = Sphere(
-                pos_x=sphere_config['pos_x'] + border * vox_size_xy,
-                pos_y=sphere_config['pos_y'] + border * vox_size_xy,
-                pos_z=sphere_config['pos_z'],
-                radius=sphere_config['radius']
-            )
-            liste_spheres.append(sphere)
-            spheres_list_output.append({
-                "radius": sphere.radius,
-                "x_position_m": sphere.pos_x - border*vox_size_xy,
-                "y_position_m": sphere.pos_y - border*vox_size_xy,
-                "z_position_m": sphere.pos_z
-            })
-        
-        # Save sphere positions (once per n, shared across all illuminations)
-        print("  - Saving sphere positions...")
-        with open(positions_file, 'w') as f:
-            for sphere in liste_spheres:
-                f.write(f"{sphere.pos_x - border*vox_size_xy}\t{sphere.pos_y - border*vox_size_xy}\t"
-                       f"{sphere.pos_z}\t{sphere.radius}\n")
-        
-        # Insert spheres in volume
-        print("  - Inserting spheres in volume...")
-        for i, sphere in enumerate(liste_spheres):
-            insert_sphere_in_mask_volume(cp_mask_volume_upscaled, sphere, 
-                                        vox_size_xy / upscale_factor, vox_size_z, upscale_factor)
-        
-        # Flip Z axis
-        cp_mask_volume_upscaled = cp.flip(cp_mask_volume_upscaled, axis=2)
-        cp_mask_volume = cp_mask_volume_upscaled[:,:,:].reshape(
-            holo_size_xy, upscale_factor, holo_size_xy, upscale_factor, z_size
-        ).mean(axis=(1, 3))
-        
-        # Segmentation binaire AVANT lissage (vérité terrain)
-        bool_volume_mask = cp.asnumpy(cp_mask_volume > 0.0)
-        
-        # Lissage du volume pour réduire l'aliasing des bords voxelisés
-        smoothing_cfg = config.get('volume_smoothing', {})
-        if smoothing_cfg.get('enabled', False):
-            cp_mask_volume = smooth_volume_gpu(
-                cp_mask_volume,
-                method=smoothing_cfg.get('method', 'gaussian'),
-                sigma=smoothing_cfg.get('sigma', 0.5),
-                sdf_width=smoothing_cfg.get('sdf_width', 1.0)
-            )
-        
-        # Loop over illumination sources (1 hologram per source)
-        for src_idx in range(config['number_of_sources']):
-            angle_X = config['sources_angle_degree_X'][src_idx]
-            angle_Y = config['sources_angle_degree_Y'][src_idx]
-            angle_suffix = f"_angleX{angle_to_str(angle_X)}_Y{angle_to_str(angle_Y)}"
-            holo_id = f"{n}{angle_suffix}"
-            
-            print(f"  - Source {src_idx+1}/{config['number_of_sources']}: angle_X={angle_X}° angle_Y={angle_Y}°")
-            
-            # Create illumination field
-            ecart_type_bruit = ((config['noise_std_max'] - config['noise_std_min']) * rnd.random() +
-                               config['noise_std_min'])
-            cp_field_plane = create_illumination_field(
-                field_size_xy_pix=holo_size_xy_w_b,
-                wavelength=wavelength,
-                pixel_size=vox_size_xy,
-                medium_index=index_milieu,
-                number_of_sources=1,
-                sources_angle_degree_X=[angle_X],
-                sources_angle_degree_Y=[angle_Y],
-                noise_mean=config['illumination_mean'],
-                noise_std=ecart_type_bruit
-            )
-            
-            # Propagation
-            print("  - Propagating hologram...")
-            for i in range(z_size):
-                cp_field_plane = propagation.propag_angular_spectrum(
-                    cp_field_plane, d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag,
-                    lambda_milieu, grossissement, pix_size, holo_size_xy_w_b, holo_size_xy_w_b, 
-                    vox_size_z, 0, 0
-                )
-                
-                cp_mask_plane_w_border = pad_centered(cp_mask_volume[:,:,i], 
-                                                      [holo_size_xy_w_b, holo_size_xy_w_b])
-                
-                cp_field_plane = cross_through_plane(
-                    mask_plane=cp_mask_plane_w_border,
-                    plane_to_shift=cp_field_plane,
-                    shift_in_env=shift_in_env,
-                    shift_in_obj=shift_in_obj,
-                    transmission_in_obj=transmission_obj
-                )
-            
-            # Crop and save
-            cropped_field_plane = cp_field_plane[border:border+holo_size_xy, 
-                                                 border:border+holo_size_xy]
-            
-            intensity_image = cp.asnumpy(traitement_holo.intensite(cropped_field_plane))
-            
-            print("  - Saving results...")
-            save_hologram_results(
-                dirs, holo_id,
-                intensity_image,
-                cp.asnumpy(traitement_holo.intensite(cp_mask_volume.astype(cp.float32))),
-                bool_volume_mask,
-                liste_spheres,
-                config.get('save_options', {}),
-                vox_size_xy, vox_size_z,
-                object_type='sphere'
-            )
-            
-            print(f"    ✓ Illumination {src_idx+1} complete (id={holo_id})")
-        
         print(f"  ✓ Hologram set {n} complete ({config['number_of_sources']} illuminations)")
 
 
@@ -1078,7 +734,7 @@ Examples:
     print(f"Object index: {config['index_object']}")
     print(f"Illumination sources: {config['number_of_sources']}")
     for _i in range(config['number_of_sources']):
-        print(f"  Source {_i+1}: angle_X={config['sources_angle_azimuth'][_i]:.2f}°  angle_Y={config['sources_angle_polar'][_i]:.2f}°")
+        print(f"  Source {_i+1}: azimuth={config['sources_angle_azimuth'][_i]:.2f}°  polar={config['sources_angle_polar'][_i]:.2f}°")
     
     smoothing = config.get('volume_smoothing', {})
     if smoothing.get('enabled', False):
@@ -1096,14 +752,13 @@ Examples:
     print("="*80 + "\n")
     
     # Run simulation based on mode
-    if config['mode'] == 'bacteria_random':
-        simulate_bacteria_random(config, dirs)
-    elif config['mode'] == 'bacteria_list':
-        simulate_bacteria_list(config, dirs)
-    elif config['mode'] == 'sphere_random':
-        simulate_sphere_random(config, dirs)
-    elif config['mode'] == 'sphere_list':
-        simulate_sphere_list(config, dirs)
+    if config['mode'] in ('bacteria_random', 'bacteria_list'):
+        simulate_bacteria(config, dirs)
+    elif config['mode'] in ('sphere_random', 'sphere_list'):
+        simulate_sphere(config, dirs)
+    else:
+        raise ValueError(f"Unknown mode: {config['mode']!r} (attendu : bacteria_random, "
+                         "bacteria_list, sphere_random ou sphere_list)")
     
     print("\n" + "="*80)
     print("SIMULATION COMPLETE")
