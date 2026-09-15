@@ -1,0 +1,31 @@
+# --- UNet3D architecture ---
+channels:     [1, 16, 32, 64, 128, 256]  # input + encoder + bottleneck
+dropout_prob: 0.3
+norm:         batchnorm   # batchnorm | groupnorm | instancenorm
+residual:     false       # true → residual blocks in encoder/decoder
+
+# --- Optimizer ---
+lr:          1.0e-3
+batch_size:  30
+num_workers: 4
+seed:        42
+
+# --- Schedule / stopping ---
+epochs:      80
+patience:    10           # early stopping on obj_f1
+
+# --- Loss ---
+loss:          bce_dice   # bce_dice | focal_dice | tversky
+bce_weight:    0.4        # bce_dice only
+dice_weight:   0.6        # bce_dice + focal_dice
+focal_alpha:   0.25       # focal_dice only
+focal_gamma:   2.0        # focal_dice only
+tversky_alpha: 0.3        # FP weight  (alpha+beta should =1)
+tversky_beta:  0.7        # FN weight  (beta > alpha → penalise missed bacteria more)
+
+# --- Validation ---
+val_n_patches: 500        # fixed deterministic validation set size
+
+# --- Run identity ---
+run_name: baseline   # change per experiment: baseline | gn | tversky | res | gn_tversky ...
+checkpoint_dir: "../Z100/10b/checkpoints/baseline"
