@@ -20,6 +20,7 @@ import json
 import numpy as np
 import cupy as cp
 import datetime
+import math
 import traceback
 import shutil
 from PIL import Image
@@ -129,22 +130,25 @@ def load_parameters():
     return params
 
 
-def create_output_directories(base_path):
+def create_output_directories(base_path, save_holo_ref=False):
     """Crée les répertoires de sortie avec timestamp et copie le fichier de paramètres"""
     now = datetime.datetime.now()
     formatted_date_time = now.strftime("%Y_%m_%d_%H_%M_%S")
     print(f"Date et heure actuelles : {formatted_date_time}")
-    
+
     output_dir = os.path.join(base_path, formatted_date_time)
     simulated_hologram_dir = os.path.join(output_dir, "simulated_hologram")
     binary_volume_dir = os.path.join(output_dir, "binary_volume")
     hologram_volume_dir = os.path.join(output_dir, "hologram_volume")
     object_positions_dir = os.path.join(output_dir, "object_positions")
-    
+    holo_ref_dir = os.path.join(output_dir, "holo_ref")
+
     os.makedirs(simulated_hologram_dir, exist_ok=True)
     os.makedirs(binary_volume_dir, exist_ok=True)
     os.makedirs(hologram_volume_dir, exist_ok=True)
     os.makedirs(object_positions_dir, exist_ok=True)
+    if save_holo_ref:
+        os.makedirs(holo_ref_dir, exist_ok=True)
     
     # Copie du fichier de paramètres dans le répertoire de sortie
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -165,7 +169,8 @@ def create_output_directories(base_path):
         'simulated_hologram': simulated_hologram_dir,
         'binary_volume': binary_volume_dir,
         'hologram_volume': hologram_volume_dir,
-        'object_positions': object_positions_dir
+        'object_positions': object_positions_dir,
+        'holo_ref': holo_ref_dir
     }
 
 
@@ -202,7 +207,7 @@ def generate_hologram(params, iteration, dirs, status_file=None):
     
     pix_size = params['pix_size']
     grossissement = params['grossissement']
-    distance_volume_camera = params.get('distance_volume_camera', 0.01)  # Distance volume-caméra (défaut: 1cm)
+    distance_volume_camera = params.get('distance_volume_camera', 0.0)  # Distance volume-caméra en m, espace objet (défaut: 0)
     step_z = params.get('step_z', 0.5e-6)  # Pas Z (défaut: 0.5 µm)
     
     # Calcul de vox_size_z_total à partir de step_z et z_size
@@ -210,8 +215,10 @@ def generate_hologram(params, iteration, dirs, status_file=None):
     
     wavelength = params['wavelength']
     illumination_mean = params['illumination_mean']
-    ecart_type_min = params['ecart_type_min']
-    ecart_type_max = params['ecart_type_max']
+    # Bruit capteur (relatif au fond), ajouté à l'intensité après propagation. Les anciennes clés
+    # ecart_type_min / ecart_type_max (bruit d'illumination, supprimé) sont ignorées.
+    sensor_noise_std_min = params.get('sensor_noise_std_min', 0.015)
+    sensor_noise_std_max = params.get('sensor_noise_std_max', 0.015)
     
     # Options de sauvegarde
     save_opts = {
@@ -222,8 +229,10 @@ def generate_hologram(params, iteration, dirs, status_file=None):
         'propagated_npy': params.get('save_propagated_npy', False),
         'segmentation_tiff': params.get('save_segmentation_tiff', True),
         'segmentation_npy': params.get('save_segmentation_npy', False),
-        'positions_csv': params.get('save_positions_csv', True)
+        'positions_csv': params.get('save_positions_csv', True),
+        'holo_ref': params.get('save_holo_ref', False)
     }
+    holo_ref_nb_planes = max(1, int(params.get('holo_ref_nb_planes', 1)))
     
     # Calculs dérivés
     holo_size_xy_w_b = holo_size_xy + border * 2
@@ -270,14 +279,16 @@ def generate_hologram(params, iteration, dirs, status_file=None):
     if status_file:
         update_status(status_file, 1, "Création du champ d'illumination...", 10)
     rng = np.random.default_rng()
-    np_field_plane = np.full(shape=[holo_size_xy_w_b, holo_size_xy_w_b], 
-                             fill_value=0.0+0.0j, dtype=np.complex64)
-    ecart_type_bruit = (ecart_type_max - ecart_type_min) * rng.random() + ecart_type_min
-    bruit_gaussien = np.abs(np.random.normal(illumination_mean, ecart_type_bruit, 
-                                            [holo_size_xy_w_b, holo_size_xy_w_b]))
-    np_field_plane.real = np.sqrt(bruit_gaussien)
-    cp_field_plane = cp.asarray(np_field_plane)
-    
+    sensor_std = (sensor_noise_std_max - sensor_noise_std_min) * rng.random() + sensor_noise_std_min
+
+    def make_illumination_field():
+        # Onde plane sans bruit, d'intensité illumination_mean (amplitude √illumination_mean)
+        np_field_plane = np.full(shape=[holo_size_xy_w_b, holo_size_xy_w_b],
+                                 fill_value=np.sqrt(illumination_mean) + 0.0j, dtype=np.complex64)
+        return simu_hologram.apodize_border(cp.asarray(np_field_plane), border)
+
+    cp_field_plane = make_illumination_field()
+
     field_abs = cp.abs(cp_field_plane)
     
     # Initialisation des masques
@@ -338,10 +349,13 @@ def generate_hologram(params, iteration, dirs, status_file=None):
             if status_file:
                 progress = 30 + int(20 * (i + 1) / number_of_bacteria)
                 update_status(status_file, 3, f"Insertion bactérie {i+1}/{number_of_bacteria}...", progress)
-        simu_hologram.GPU_insert_bact_in_mask_volume(cp_mask_volume_upscaled, bact, 
-                                      vox_size_xy / upscale_factor, vox_size_z)
-            
-    # Inversion de l'axe Z et downsampling
+        # upscale_factor : aligne la grille fine sur la grille finale (voir upscale_grid_shift),
+        # sans quoi le moyennage de blocs ci-dessous décale l'objet de (up-1)/(2*up) voxel
+        simu_hologram.GPU_insert_bact_in_mask_volume(cp_mask_volume_upscaled, bact,
+                                      vox_size_xy / upscale_factor, vox_size_z, upscale_factor)
+
+    # Inversion de l'axe Z et downsampling : le bloc moyenné est décentré d'un demi-bloc par
+    # rapport au point d'échantillonnage i*vox, ce que compense le décalage fait à l'insertion
     cp_mask_volume_upscaled = cp.flip(cp_mask_volume_upscaled, axis=2)
     cp_mask_volume = cp_mask_volume_upscaled[:, :, :].reshape(
         holo_size_xy, upscale_factor, holo_size_xy, upscale_factor, z_size
@@ -400,7 +414,7 @@ def generate_hologram(params, iteration, dirs, status_file=None):
     
     # Propagation avec la distance volume-caméra
     if distance_volume_camera > 0:
-        print(f"    Distance volume-caméra : {distance_volume_camera*1000:.1f} mm")
+        print(f"    Distance volume-caméra : {distance_volume_camera*1e6:.1f} µm")
         cp_field_plane = propagation.propag_angular_spectrum(
             cp_field_plane, d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag,
             lambda_milieu, float(grossissement), pix_size, 
@@ -411,8 +425,28 @@ def generate_hologram(params, iteration, dirs, status_file=None):
     croped_field_plane = cp_field_plane[border:border+holo_size_xy, border:border+holo_size_xy]
     
     # Calcul de l'intensité de l'hologramme final (plan du capteur)
-    intensity_image = cp.asnumpy(traitement_holo.intensite(croped_field_plane))
-    
+    # Bruit capteur ajouté à l'intensité (le fond vaut illumination_mean)
+    intensity_image = cp.asnumpy(simu_hologram.add_sensor_noise(
+        traitement_holo.intensite(croped_field_plane), sensor_std, illumination_mean, rng))
+
+    # Hologramme de référence, comme la moyenne de N images d'un film sans objet : la même
+    # illumination propagée sur la même distance totale (épaisseur du volume + distance
+    # volume-caméra), plus un bruit capteur σ/√N (moyenne de N tirages gaussiens indépendants).
+    # Sans masque de phase, les z_size pas de dz se composent en une seule propagation.
+    if save_opts['holo_ref']:
+        distance_ref = z_size * vox_size_z
+        if distance_volume_camera > 0:
+            distance_ref += distance_volume_camera
+        print(f"  Hologramme de référence : moyenne de {holo_ref_nb_planes} image(s), propagée sur {distance_ref*1e6:.1f} µm")
+        cp_field_ref = propagation.propag_angular_spectrum(
+            make_illumination_field(), d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag,
+            lambda_milieu, float(grossissement), pix_size,
+            holo_size_xy_w_b, holo_size_xy_w_b, distance_ref, 0, 0
+        )
+        ref_image = cp.asnumpy(simu_hologram.add_sensor_noise(
+            traitement_holo.intensite(cp_field_ref[border:border+holo_size_xy, border:border+holo_size_xy]),
+            sensor_std / math.sqrt(holo_ref_nb_planes), illumination_mean, rng))
+
     # Conversion du volume d'intensité en numpy
     intensity_volume = cp.asnumpy(cp_intensity_volume)
     
@@ -451,7 +485,25 @@ def generate_hologram(params, iteration, dirs, status_file=None):
     if save_opts['hologram_npy']:
         np.save(holo_npy_file, intensity_image.astype(np.float32))
         saved_files.append(f"Hologramme NPY : {holo_npy_file}")
-    
+
+    # Hologramme de référence, dans les mêmes formats que l'hologramme.
+    # Le BMP est normalisé avec le min/max de l'hologramme (et non les siens) pour que
+    # les deux BMP partagent la même échelle d'intensité.
+    if save_opts['holo_ref']:
+        ref_base = os.path.join(dirs['holo_ref'], f"holo_ref_{iteration}")
+        if save_opts['hologram_bmp']:
+            i_min, i_max = intensity_image.min(), intensity_image.max()
+            ref_normalized = (np.clip((ref_image - i_min) / (i_max - i_min + 1e-10), 0.0, 1.0)
+                              * 255).astype(np.uint8)
+            Image.fromarray(ref_normalized).save(ref_base + ".bmp")
+            saved_files.append(f"Hologramme référence BMP : {ref_base}.bmp")
+        if save_opts['hologram_tiff']:
+            tifffile.imwrite(ref_base + ".tiff", ref_image.astype(np.float32))
+            saved_files.append(f"Hologramme référence TIFF : {ref_base}.tiff")
+        if save_opts['hologram_npy']:
+            np.save(ref_base + ".npy", ref_image.astype(np.float32))
+            saved_files.append(f"Hologramme référence NPY : {ref_base}.npy")
+
     # Volume propagé TIFF multistack
     if save_opts['propagated_tiff']:
         simu_hologram.save_volume_as_tiff(intensity_tiff_file, intensity_volume)
@@ -523,7 +575,8 @@ def main():
         print(f"{'='*80}\n")
         
         # Création des répertoires de sortie (une seule fois pour toutes les itérations)
-        dirs = create_output_directories(params['output_base_path'])
+        dirs = create_output_directories(params['output_base_path'],
+                                         params.get('save_holo_ref', False))
         
         # Génération des hologrammes
         all_saved_files = []

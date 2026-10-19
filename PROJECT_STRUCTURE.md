@@ -1,374 +1,205 @@
-# Structure du Projet
+# Structure du dépôt Simu-Bacteria-Holograms
 
-## Organisation des répertoires
+État au 2026-10-19. Ce document dit, pour chaque répertoire, **à quoi il sert, ce qu'il contient, s'il est
+encore actif**, et ce qui est versionné dans git. Il remplace la version de mars 2026, qui décrivait des
+répertoires renommés ou supprimés depuis.
 
-```
-Simu-Bacteria-Holograms/                     # Répertoire racine du projet
-│
-├── simu holo/                              # ⭐ PRINCIPAL: Simulation d'hologrammes (JSON config)
-│   ├── main_simu_hologram.py               # ← SCRIPT PRINCIPAL UNIFIÉ
-│   ├── generate_config.py                  # ← Générateur de config
-│   ├── README.md                           # Guide complet d'utilisation
-│   ├── setup.sh                            # Script de setup
-│   │
-│   ├── configs/                            # 📋 Fichiers de configuration JSON
-│   │   ├── config_bacteria_random.json
-│   │   ├── config_bacteria_list.json
-│   │   ├── config_sphere_random.json
-│   │   ├── config_sphere_list.json
-│   │   └── config_template.json
-│   │
-│   ├── docs/                               # 📚 Documentation détaillée
-│   │   ├── CONFIG_GUIDE.md                 # Référence complète des paramètres
-│   │   ├── CONFIG_SAVE_OPTIONS.md          # Guide des 8 options de sauvegarde
-│   │   ├── IMPROVEMENTS_SUMMARY.md         # Résumé des améliorations ML
-│   │   └── REFACTOR_JSON_CONFIG.md         # Notes techniques de refonte
-│   │
-│   ├── examples/                           # 🔧 Exemples d'utilisation
-│   │   └── run_examples.sh                 # 5 scénarios d'exemple
-│   │
-│   └── legacy/                             # 📦 Scripts obsolètes (historique)
-│       ├── main_simu_hologram_bacteria_list.py
-│       ├── main_simu_hologram_random_bact.py
-│       ├── main_simu_hologram_random_sphere.py
-│       ├── main_simu_hologram_sphere_list.py
-│       └── README.md
-│
-├── simu bact GUI/                          # 🖥️ Interface graphique interactive
-│   ├── simulation_gui.py                   # GUI principale
-│   ├── processor_simu_bact.py              # Processeur en arrière-plan
-│   ├── visualizer_gui.py                   # Visualiseur GUI
-│   ├── parameters_simu_bact.json           # Config GUI
-│   └── ...
-│
-├── [Modules core de simulation]
-│   ├── simu_hologram.py                    # Génération hologrammes
-│   ├── propagation.py                      # Propagation onde (spectre angulaire)
-│   ├── traitement_holo.py                  # Traitement post-processing
-│   ├── typeHolo.py                         # Types/classes hologramme
-│   └── ...
-│
-├── [Deep learning / Machine Learning]
-│   ├── test_UNET3D.py                      # ⭐ 3D U-Net (amélioré)
-│   ├── CCL3D.py
-│   ├── deep_segmentation_IA.py
-│   ├── save_test_UNET3D.py
-│   ├── pipeline_holotracker_locate_simple.py
-│   └── ...
-│
-├── [Fichiers utils]
-│   ├── focus.py
-│   ├── detection_param.json
-│   ├── holo_param.json
-│   ├── parameters_simu_bact.json
-│   └── ...
-│
-└── [Fichiers documentation racine]
-    ├── QUICK_START.md                      # ← START HERE! Guide de démarrage
-    ├── PROJECT_STRUCTURE.md                # Ce fichier
-    ├── README.md                           # Historique du projet
-    ├── LICENCE
-    └── .git/, .gitignore
-```
-│   ├── config_bacteria_list.json           (copié dans simu holo/configs/)
-│   ├── config_sphere_random.json           (copié dans simu holo/configs/)
-│   ├── config_sphere_list.json             (copié dans simu holo/configs/)
-│   ├── config_template.json                (copié dans simu holo/configs/)
-│   ├── config_*.json (autres paramètres)
-│   └── parameters_simu_bact.json           (GUI)
-│
-├── [Documentation obsolète]
-│   ├── CONFIG_GUIDE.md                     (copié dans simu holo/docs/)
-│   ├── CONFIG_SAVE_OPTIONS.md              (copié dans simu holo/docs/)
-│   ├── IMPROVEMENTS_SUMMARY.md             (copié dans simu holo/docs/)
-│   ├── REFACTOR_JSON_CONFIG.md             (copié dans simu holo/docs/)
-│   ├── run_examples.sh                     (copié dans simu holo/examples/)
-│   └── ...
-│
-├── README.md                               # Documentation racine du projet
-├── LICENCE
-└── .git/                                   # Historique Git
-```
+## 1. Vue d'ensemble
 
-## Principes d'organisation
-
-### 1. **Séparation des fonctionnalités**
-
-#### `libs/` - Modules centralisés 📦
-- **Contenu** : Tous les modules de base du projet
-  - `simu_hologram.py` : Génération hologrammes et objets
-  - `propagation.py` : Propagation onde (spectre angulaire)
-  - `traitement_holo.py` : Post-processing hologrammes
-  - `typeHolo.py` : Définitions types (Bacterie, Sphere, etc.)
-  - `CCL3D.py` : Composantes connexes 3D
-  - `focus.py` : Critères de focus
-- **Imports** : Utilisé par tous les scripts via `from libs.module import *`
-- **Avantage** : Centralisation, pas de duplication, imports cohérents
-
-#### `simu holo/` - Simulation par configuration JSON
-- ✓ Approche moderne avec fichiers de configuration
-- ✓ Documentation complète et centralisée  
-- ✓ Exemples pratiques
-- ✓ Options de sauvegarde flexibles
-- **À utiliser pour** : Nouvelles simulations, production, recherche
-
-#### `simu bact GUI/` - Interface utilisateur
-- GUI intuitive pour les utilisateurs non-techniques
-- Configuration graphique directe
-- Traitement en arrière-plan
-- **À utiliser pour** : Tests interactifs, configuration simple
-
-#### `localisation_pipeline/` - Pipelines de traitement
-- Scripts pour tester la reconstruction et localisation
-- `pipeline_holotracker_locate_simple.py` : Pipeline éducatif complet
-- `main_reconstruction_volume.py` : Reconstruction volumétrique simple
-- **À utiliser pour** : Tests, validation, enseignement
-
-#### `deep_learning_segmentation/` - Deep Learning
-- Scripts d'entraînement et test U-Net 3D
-- Segmentation volumétrique supervisée
-- Métriques et évaluation
-- **À utiliser pour** : Recherche IA, comparaison avec méthodes classiques
-
-### 2. **Flux de travail recommandé**
+Le dépôt simule des hologrammes inline de bactéries pour mettre au point leur détection 3D. Il alimente aussi
+HOLOTRACKER, le pipeline classique, qui partage la même physique (`libs/`).
 
 ```
-Utilisateur
-    ↓
-    ├─→ Nouvelle simulation?
-    │   └─→ simu holo/
-    │       1. Modifier configs/config_*.json
-    │       2. python main_simu_hologram.py configs/config_*.json
-    │       3. Résultats → simu_bacteria/YYYY_MM_DD_HH_MM_SS/
-    │
-    ├─→ Configuration interactive?
-    │   └─→ simu bact GUI/
-    │       1. python simulation_gui.py
-    │       2. Configurer via interface
-    │       3. Lancer simulation
-    │
-    ├─→ Test pipeline classique?
-    │   └─→ localisation_pipeline/
-    │       1. Copier un hologramme test (simu_holo_test.bmp)
-    │       2. python pipeline_holotracker_locate_simple.py
-    │       3. Résultats → result.csv
-    │
-    └─→ Deep learning?
-        └─→ deep_learning_segmentation/
-            1. Générer données avec simu holo/
-            2. python split_data.py
-            3. python train_UNET3D.py
-            4. python test_UNET3D.py
+                 libs/  (physique commune : propagation, focus, insertion des objets, composantes connexes)
+                   │
+   ┌───────────────┼──────────────────────────────┐
+   ▼               ▼                              ▼
+ SIMULER        DÉTECTER                       ANALYSER
+ simu holo script/          localisation_pipeline/  (classique)     stats/  → FOCUS_REPORT/, SEGMENTATION_REPORT/,
+ simu holo bact with GUI/   deep_learning_segmentation/ (U-Net 3D)            TRAJECTORY_REPORT/, output/
+ Hybrid_REAL_SIMU_HOLOGRAMS/
+ deep_learning_segmentation/generate_*.py
+   │
+   ▼
+ DONNÉES : REAL HOLO FILM/ (film réel)   SIMU HOLO FILM/ (films simulés par le GUI)
 ```
 
-### 3. **Système d'imports unifié**
+## 2. Par où commencer
 
-Tous les scripts utilisent maintenant le système d'imports basé sur `libs/` :
+| Je veux… | Aller dans | Point d'entrée |
+|---|---|---|
+| détecter et segmenter des bactéries sur un film | `deep_learning_segmentation/` | `GUI_inference.py` |
+| entraîner ou réentraîner le U-Net 3D | `deep_learning_segmentation/` | `GUI_train.py` |
+| simuler un hologramme à partir d'un JSON | `simu holo script/` | `main_simu_hologram.py <config.json>` |
+| générer un jeu de données avec une interface | `simu holo bact with GUI/` | `simulation_gui.py` |
+| simuler des bactéries sur le film réel (fond réel) | `Hybrid_REAL_SIMU_HOLOGRAMS/` | `GUI_real_simulation.py` |
+| localiser par la méthode classique (seuil, CCL) | `localisation_pipeline/` | `pipeline_holotracker_locate_*.py` |
+| comparer simulé et réel, mesurer un critère de focus | `stats/` | `GUI_holo_stats.py`, `stat_report_*.py` |
+| connaître les faits physiques établis | racine | `CLAUDE.md` (section Physique) |
 
-```python
-import sys
-import os
+## 3. Code
 
-# Ajouter la racine du projet au path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+### `libs/` — physique commune *(actif, versionné)*
+Modules importés par tous les autres répertoires, et partagés avec HOLOTRACKER.
+- `propagation.py` : spectre angulaire, Fresnel, Rayleigh-Sommerfeld, propagation volumique.
+- `simu_hologram.py` : insertion des bâtonnets et des sphères dans le volume masque (GPU), illumination, déphasage
+  par tranche (BPM), bruit capteur. **Longueur du bâtonnet = longueur bout à bout depuis le 2026-10-18.**
+- `focus.py` : critères de focus (TENEGRAD, SUM_OF_VARIANCE…).
+- `CCL3D.py` : composantes connexes 3D.
+- `traitement_holo.py`, `typeHolo.py` : intensité, normalisation, entrées/sorties ; classes `Bacterie`, `Sphere`.
 
-# Imports depuis libs/ (avec préfixe)
-from libs.traitement_holo import *
-from libs import propagation as propag
-from libs.CCL3D import *
-from libs import focus
-```
+### `simu holo script/` — simulateur piloté par JSON *(actif, versionné)*
+- **Point d'entrée** : `main_simu_hologram.py <config.json>`, avec les configurations `config_bacteria_random.json`,
+  `config_bacteria_list.json`, `config_sphere_*.json`, `config_1bact_3_illuminations.json` et
+  `config_template.json`.
+- **Méthode** : BPM sur toutes les tranches du volume.
+- **Sorties** :
+  - l'hologramme ;
+  - le volume propagé ;
+  - le `bin_volume`, masque binaire enregistré **après l'inversion de l'axe Z** ;
+  - les positions.
 
-**Imports internes dans libs/** : Les modules de `libs/` utilisent des imports relatifs :
+  Elles vont dans `simu_bacteria/`, non versionné.
+- `generate_config.py` génère des configurations ; `docs/` décrit les options ; `examples/run_examples.sh`.
+- **Doublons historiques** :
+  - `main_simu_hologram_old.py` : copie à 96,8 % du script principal ;
+  - `main_simu_hologram_triple_illumination.py` : variante aux paramètres codés en dur ;
+  - `legacy/` : les 4 anciens scripts séparés, avant leur fusion.
 
-```python
-# Dans libs/propagation.py
-from . import typeHolo
-from .traitement_holo import *
-```
+### `simu holo bact with GUI/` — génération de jeux par interface *(actif, versionné)*
+- `simulation_gui.py` écrit `parameters_simu_bact.json`, puis lance `processor_simu_bact.py`, qui produit les
+  hologrammes ; `visualizer_gui.py` affiche côte à côte l'hologramme, le volume segmenté et le volume propagé.
+- Sorties dans `SIMU HOLO FILM/<date>/`.
+- `processing_status.json`, `processing_result.json`, `test_interruption_config.json` : fichiers d'état et de test.
 
-**Avantages** :
-- Imports cohérents dans tout le projet
-- Pas de confusion sur l'origine des modules
-- Facilite le debugging et la maintenance
-- Structure claire et professionnelle
+### `Hybrid_REAL_SIMU_HOLOGRAMS/` — simulations sur le film réel *(actif, versionné sauf `output/`)*
+- `real_simulation.py` + `config_real_simulation.json` + `GUI_real_simulation.py`.
+- **Chaîne** :
+  1. retrait de la moyenne du film réel ;
+  2. nettoyage des bactéries détectées par HOLOTRACKER (CLEAN, image jumelle comprise) ;
+  3. bactéries simulées aux positions des trajectoires.
+- **Sert aussi au U-Net** : ses fonctions `simulate_frame` (BPM sur les seules tranches occupées) et
+  `bacteria_instance_masks` (masque d'instance de chaque bactérie) sont le simulateur utilisé par
+  `deep_learning_segmentation/`.
+- **Calibration de Δn** sur le film réel : 0,046.
+- `output/bacterias_2026_10_17_16_08_17/` (≈ 400 Mo) : un traitement complet du film, avec la moyenne, le fond
+  nettoyé, les bactéries nettoyées, les bactéries simulées seules et sur fond, et `ground_truth.csv`. Il date
+  d'avant la correction de la longueur du bâtonnet.
 
-### 4. **Organisation des fichiers**
+### `localisation_pipeline/` — méthode classique *(actif, versionné)*
+- **Trois variantes** de la chaîne propagation → focus → seuil → CCL3D :
+  - `pipeline_holotracker_locate_simple.py` : seuil global ;
+  - `pipeline_holotracker_locate_local_threshold.py` : seuil local par mailles ;
+  - `pipeline_holotracker_locate_local_maxima.py` : maxima locaux, la meilleure (rapports du 2026-10-13).
+- `main_reconstruction_volume.py` : exemple de reconstruction sur `simu_holo_test.bmp`.
 
-#### Données générées
-- `simu_bacteria/YYYY_MM_DD_HH_MM_SS/` : Résultats simulations bactéries
-- `simu_sphere/YYYY_MM_DD_HH_MM_SS/` : Résultats simulations sphères
-- Sous-dossiers : `holograms/`, `positions/`, `data_holograms/`
+### `deep_learning_segmentation/` — U-Net 3D *(actif ; code et modèles versionnés, données non)*
+Positions 3D, puis segmentation d'instance de chaque bactérie, en deux étages. Détail complet dans son
+[README.md](deep_learning_segmentation/README.md), schémas dans `PIPELINE_UNET3D.pdf`, résultats dans
+`RAPPORT_UNET3D.md`.
+- **Modèles retenus** : `models/stage1`, `models/stage2`, entraînés sur de la simulation sans fond.
+- **Données** : `data/seg_sim` (jeu d'entraînement), `data/seq` (films simulés en mouvement), non versionnées.
+- **Interfaces** : `GUI_inference.py` (un clic sur une bactérie montre ses coupes XY, XZ, YZ) et
+  `GUI_train.py`.
+- `experiences/` : scripts des expériences passées ; `resultats/` : benchmarks des modèles retenus.
 
-#### Configurations
-- `simu holo/configs/` : Configurations JSON pour simulations
-- `deep_learning_segmentation/config_*.json` : Configs ML
-- `simu bact GUI/parameters_*.json` : Configs GUI
+### `stats/` — statistiques et rapports *(actif, versionné)*
+- **Comparaison simulé / réel** : `holo_stats.py` (moteur) et `GUI_holo_stats.py`, avec `holo_stats_real.yaml`
+  et `holo_stats_simu.yaml`. Statistiques hologramme, volume et objets.
+- **Rapports de mesure** : `stat_report_*.py`, chacun avec son YAML, sur le moteur commun `report_common.py` :
 
-#### Documentation
-- Racine : README.md, QUICK_START.md, PROJECT_STRUCTURE.md
-- `simu holo/docs/` : Documentation simulation
-- `libs/README.md` : Documentation modules
+  | Script | Mesure | Sortie |
+  |---|---|---|
+  | `stat_report_distance_Z_bact.py`, `_sphere.py`, `stat_report_orientation_bact.py` | erreur de position selon z ou l'orientation | `output/` |
+  | `stat_report_orientation_focus.py` | critères de focus selon l'orientation | `FOCUS_REPORT/1_bacteria/` |
+  | `stat_report_dense_focus.py` | critères de focus en milieu dense | `FOCUS_REPORT/DENSE/` |
+  | `stat_report_dense_segmentation.py` | 5 méthodes de segmentation en milieu dense | `SEGMENTATION_REPORT/` |
+  | `stat_report_trajectories.py` | dynamique des bactéries du film réel | `TRAJECTORY_REPORT/` |
 
-## Migration et compatibilité
+## 4. Données
 
-### Structure actuelle (Février 2026)
+### `REAL HOLO FILM/` — film réel de référence *(versionné)*
+- `bacterias/` : 100 hologrammes BMP 1024 × 1024 (pixel objet 0,175 µm) :
+  - `RESULT_20261016_172327.csv` : détections d'HOLOTRACKER ;
+  - `TRAJECTORIES_20261016_173113.csv` : trajectoires (57) ;
+  - `mean/` : moyennes du film ;
+  - `result/` : **inférence du U-Net du 2026-10-18**, sur 0–100 µm. Il contient `positions_unet3d.csv` aux colonnes
+    du RESULT d'HOLOTRACKER, une BMP par image avec les localisations, et les masques des instances.
+- `polystyrene_spheres/` : 100 hologrammes de billes, pas encore exploités.
 
-Le projet a été réorganisé pour une meilleure maintenabilité :
+### `SIMU HOLO FILM/` — films simulés par le GUI *(28 Go ; 172 fichiers versionnés)*
+- **Deux tirages du GUI de simulation**, `2026_09_21_14_51_58/` et `2026_10_12_17_12_44/` (14 Go chacun) :
+  hologrammes, volumes propagés, `binary_volume/`, positions, `parameters_simu_bact.json`.
+- **Anciens paramètres** : Δn = 0,005 (signal 8,6 fois trop faible), longueurs de 1,2 à 2,5 µm, ancienne
+  géométrie du bâtonnet.
 
-**Avant** :
-- Modules éparpillés à la racine
-- Imports directs sans namespace
-- Scripts de test mélangés avec les modules
+## 5. Rapports et résultats
 
-**Après** :
-- `libs/` : Tous les modules centralisés
-- `localisation_pipeline/` : Scripts de test/pipeline séparés
-- Imports avec préfixe `libs.`
-- Structure claire et modulaire
+| Emplacement | Contenu | Date |
+|---|---|---|
+| `RAPPORT_DETECTION_SEUIL_FOCUS.md` | orientation, type de seuil, critère de focus en milieu dense | 2026-10-12/13 |
+| `FOCUS_REPORT/1_bacteria/RAPPORT_FOCUS.md` | erreur en Z selon l'orientation, par critère de focus | 2026-10-13 |
+| `FOCUS_REPORT/DENSE/RAPPORT_DENSE.md` | critères de focus de 5 à 200 bactéries (+ hologrammes simulés N005 à N200) | 2026-10-13 |
+| `SEGMENTATION_REPORT/RAPPORT_SEGMENTATION.md` | 5 méthodes classiques de segmentation en milieu dense | 2026-10-13 |
+| `UNET3D_motivation.md` | pourquoi un U-Net 3D, budget de temps | 2026-10-13 |
+| `TRAJECTORY_REPORT/` | dynamique du film réel (sans rapport rédigé ; il est dans `RAPPORT_UNET3D.md`, section 7) | 2026-10-18 |
+| `deep_learning_segmentation/RAPPORT_UNET3D.md` | U-Net 3D : détection, segmentation, film réel, temps | 2026-10-18 |
+| `output/` | sorties brutes des `stat_report_*` (non versionné) | 2026-10-12/13 |
 
-### Compatibilité
+Les rapports du 2026-10-12 et du 2026-10-13 utilisent des bâtonnets plus longs que demandé : ils mesuraient L + T/2
+bout à bout. Leurs conclusions qualitatives tiennent, les valeurs absolues portent sur ces bâtonnets.
 
-✅ Les anciens scripts dans `simu holo/legacy/` fonctionnent toujours  
-✅ Les scripts racine ont été migrés vers les bons répertoires  
-✅ Le système d'imports est unifié et documenté  
-✅ La documentation a été mise à jour
+## 6. Documents d'échange avec HOLOTRACKER (racine)
 
-## Avantages de cette organisation
+| Fichier | Sens | Contenu |
+|---|---|---|
+| `CLAUDE_HOLOTRACKER_TO_DO.md` | ce dépôt → HOLOTRACKER | constats mesurés et pistes de correction (orientation, seuil, densité) |
+| `CLAUDE_HOLOTRACKER_DEBUG_TO_DO.md` | ce dépôt → HOLOTRACKER | défauts relevés dans le code d'HOLOTRACKER |
+| `SIMULATION_TO_DO.md` | HOLOTRACKER → ce dépôt | mesure demandée au simulateur (2026-10-13) |
+| `CLAUDE.md` | instructions de travail | règles, pièges de la machine, faits physiques établis, état du code |
 
-| Aspect | Avant | Après |
-|--------|-------|-------|
-| **Clarté** | Code mélangé | Séparation claire |
-| **Maintenabilité** | Imports confus | Système unifié avec `libs/` |
-| **Navigation** | Difficile | Structure logique |
-| **Documentation** | Dispersée | Centralisée et à jour |
-| **Extensibilité** | Limité | Modulaire et scalable |
-| **Collaboration** | Confusion | Rôles et responsabilités clairs |
-- ✓ Exemples pratiques
-- ✓ Options de sauvegarde flexibles
-- **À utiliser pour**: Nouvelles simulations, production, recherche
+## 7. Hors du flux principal
 
-#### `simu bact GUI/` - Interface utilisateur
-- GUI intuitive pour les utilisateurs non-techniques
-- Configuration graphique directe
-- Traitement en arrière-plan
-- **À utiliser pour**: Tests interactifs, configuration simple
+- **`airel_holo/`** (100 Mo, versionné) : projet U-Net 3D **antérieur et indépendant**, importé en août 2026
+  (branche « airel »). Il a ses propres scripts (`main.py`, `train.py`, `model.py`, `dataset.py`), ses
+  configurations YAML et ses figures. `deep_learning_segmentation/` n'en dépend pas.
+- **`archive/`** (non versionné) : instantanés complets du code après chaque modification validée, avec leur
+  `MODIFICATIONS.md` (règle de `CLAUDE.md`).
+- **`result.csv`** (racine, versionné) : sortie de localisation ancienne (colonnes `i_image`, `baryX/Y/Z`,
+  `nb_pix`), d'origine non documentée.
+- **`README.md`, `QUICK_START.md`** (mars 2026) : **obsolètes**. Ils renvoient à `simu holo/`, qui n'existe plus, et
+  à l'ancien pipeline U-Net.
+- **`requirements.txt`**, **`LICENCE`** (GPL v3).
 
-#### Root - Modules de base
-- `simu_hologram.py`: Classes et fonctions de simulation
-- `propagation.py`: Propagation d'ondes lumineuses
-- `traitement_holo.py`: Traitement d'images
-- Importés par tous les scripts
+## 8. Ce que git suit
 
-#### Anciens scripts - Compatibilité
-- Conservés pour compatibilité descendante
-- Peuvent être supprimés une fois la migration complète
+Non versionnés (`.gitignore`) :
+- `output/` et `archive/` ;
+- `simu holo script/simu_bacteria/` ;
+- dans `deep_learning_segmentation/` : `data/`, `runs/`, `resultats/` et `runs_inference/` ;
+- les réglages mémorisés des interfaces (`*_params.json`) ;
+- les fichiers `*.npy`.
 
-### 2. **Flux de travail recommandé**
+Le motif `CLAUDE*` exclut aussi `CLAUDE.md` et les deux documents `CLAUDE_HOLOTRACKER_*.md`, qui ne sont donc
+**pas versionnés**.
 
-```mermaid
-Utilisateur
-    ↓
-    ├─→ Nouvelle simulation?
-    │   └─→ simu holo/
-    │       1. Modifier configs/config_*.json
-    │       2. python main_simu_hologram.py configs/config_*.json
-    │       3. Résultats → simu_bacteria/YYYY_MM_DD_HH_MM_SS/
-    │
-    ├─→ Configuration interactive?
-    │   └─→ simu bact GUI/
-    │       1. python simulation_gui.py
-    │       2. Configurer via interface
-    │       3. Lancer simulation
-    │
-    └─→ Deep learning?
-        └─→ Root directory
-            1. python test_UNET3D.py
-            2. Utiliser données de simu holo/
-```
+## 9. Points de confusion, et propositions de rangement (rien n'a été modifié)
 
-### 3. **Chemins d'accès et imports**
+1. **`README.md` et `QUICK_START.md`** sont périmés : les réécrire, ou les réduire à un renvoi vers ce document.
+2. **Simulateurs en double** : `main_simu_hologram_old.py`, `main_simu_hologram_triple_illumination.py` et
+   `simu holo script/legacy/` doublent le script principal. Ils pourraient être supprimés, puisqu'ils restent
+   dans git.
+3. **Trois simulateurs coexistent** :
+   - `simu holo script/` : JSON, toutes les tranches, masque binaire inversé en Z ;
+   - `simu holo bact with GUI/` : interface ;
+   - `Hybrid_REAL_SIMU_HOLOGRAMS/` : tranches occupées seulement et masques d'instance, utilisé par le U-Net.
 
-Les scripts `main_simu_hologram.py` et `generate_config.py` sont à la racine mais utilisés depuis `simu holo/`.
-
-**Option A: Symbolic links** (Unix/Linux/macOS)
-```bash
-cd simu holo/
-./setup.sh  # Crée les liens symboliques
-python main_simu_hologram.py configs/config_bacteria_random.json
-```
-
-**Option B: Chemins relatifs** (Windows/partout)
-```bash
-cd simu holo/
-python ../main_simu_hologram.py configs/config_bacteria_random.json
-```
-
-**Option C: À partir de la racine**
-```bash
-python simu\ holo/main_simu_hologram.py simu\ holo/configs/config_bacteria_random.json
-```
-
-### 4. **Fichiers dupliqués (JSON + docs)**
-
-Pour faciliter l'usage, les fichiers JSON et documentation sont dupliqués:
-- **Source**: Racine du projet (historique, sauvegarde)
-- **Actifs**: `simu holo/configs/` et `simu holo/docs/` (usage quotidien)
-
-## Migration depuis l'ancienne structure
-
-### Avant
-```
-root/
-├── config_bacteria_random.json
-├── main_simu_hologram.py
-├── CONFIG_GUIDE.md
-├── run_examples.sh
-└── ... (mélangé avec autre code)
-```
-
-### Après
-```
-root/
-├── simu holo/
-│   ├── configs/
-│   │   └── config_bacteria_random.json
-│   ├── docs/
-│   │   └── CONFIG_GUIDE.md
-│   ├── examples/
-│   │   └── run_examples.sh
-│   └── main_simu_hologram.py (lien)
-│
-└── [fichiers source toujours à la racine pour imports]
-```
-
-## Checklist de migration
-
-- ✓ Créer `simu holo/` avec sous-dossiers
-- ✓ Copier fichiers JSON dans `configs/`
-- ✓ Copier documentation dans `docs/`
-- ✓ Copier examples dans `examples/`
-- ✓ Créer README.md principal
-- ✓ Créer setup.sh pour liens symboliques
-- ⏳ Mettre à jour chemins d'import dans les scripts
-- ⏳ Tester depuis le dossier `simu holo/`
-- ⏳ Documenter la nouvelle organisation
-
-## Support des anciennes structures
-
-Pour maintenir la compatibilité:
-1. Les fichiers racine ne sont pas supprimés
-2. Les anciens scripts continuent de fonctionner
-3. La migration est graduelle et optionnelle
-4. Les utilisateurs existants ne sont pas affectés
-
-## Avantages de cette organisation
-
-| Aspect | Avant | Après |
-|--------|-------|-------|
-| **Clarté** | Code mélangé | Séparation claire |
-| **Maintenabilité** | Difficile de naviguer | Structure logique |
-| **Documentation** | Dispersée | Centralisée |
-| **Configurations** | Fichiers racine | Dossier dédié |
-| **Extensibilité** | Limité | Modulaire |
-| **Collaboration** | Confusion possible | Rôles clairs |
+   Ils partagent `libs/`, mais n'ont ni les mêmes paramètres par défaut ni les mêmes sorties.
+4. **`SIMU HOLO FILM/`** (28 Go) date d'avant la recalibration de Δn et la correction de la longueur : à
+   supprimer, ou à régénérer si on en a encore besoin.
+5. **`Hybrid_REAL_SIMU_HOLOGRAMS/output/`** (400 Mo) : son seul usage, les fonds réels pour l'entraînement, a été
+   abandonné.
+6. **`airel_holo/`** : à garder comme référence historique, ou à sortir du dépôt.
+7. **`result.csv`** et **`output/`** : sorties anciennes, sans document qui les décrive.
+8. **`CLAUDE*` dans le `.gitignore`** : les documents d'échange avec HOLOTRACKER ne sont pas versionnés ; à
+   vérifier si c'est voulu.

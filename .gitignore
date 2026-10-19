@@ -3,6 +3,7 @@ simu holo script/simu_bacteria/
 simu_bact_random/
 simu_bact_liste/
 simu_spheres/
+SIMU HOLO FILM/
 biblio/
 wandb/
 output/
@@ -11,3 +12,12 @@ archive/
 *.pyo
 *.npy
 wandb_api.txt
+stats/GUI_holo_stats_params.json
+Hybrid_REAL_SIMU_HOLOGRAMS/GUI_real_simulation_params.json
+CLAUDE*
+deep_learning_segmentation/data/
+deep_learning_segmentation/runs/
+deep_learning_segmentation/resultats/
+deep_learning_segmentation/runs_inference/
+deep_learning_segmentation/GUI_inference_params.json
+deep_learning_segmentation/GUI_train_params.json

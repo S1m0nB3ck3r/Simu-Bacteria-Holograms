@@ -1,0 +1,55 @@
+# =============================================================================
+# stat_report_dense_focus — critères de focus en milieu dense
+# Lancer : python stats/stat_report_dense_focus.py stats/stat_report_dense_focus.yaml
+#
+# Pour chaque densité : hologrammes de N bactéries aléatoires (simulés par
+# "simu holo script/main_simu_hologram.py", ou relus), puis, pour chaque critère de focus :
+# contraste LOCAL de chaque bactérie, et détection par seuil local fond + K·σ pour chaque K.
+# Durée : ~5 min de simulation + ~2 s par (hologramme, critère, K).
+# =============================================================================
+
+# Répertoire de sortie (relatif à ce fichier ou absolu) ; les hologrammes y sont écrits dans
+# holograms/N<densité>/.
+output_dir: ../FOCUS_REPORT/DENSE
+
+simulation:
+  densities: [5, 10, 50, 100, 200]   # nombres de bactéries par hologramme
+  n_holo: 3                          # hologrammes par densité
+  reuse_holograms: true              # true : relit holograms/ s'il existe déjà (pas de nouvelle simulation)
+  holo_size: 1024
+  border: 256
+  upscale_factor: 2
+  nb_planes: 200                     # plans du volume simulé ET reconstruit
+  step_um: 0.5
+  distance_volume_camera_um: 10      # distance hologramme -> premier plan (µm)
+  pixel_size_um: 7.0
+  magnification: 40
+  wavelength_nm: 660
+  index_medium: 1.33
+  index_object: 1.335
+  length_um: [1.5, 2.0]              # longueur tirée uniformément dans [min, max] (bactéries étudiées)
+  thickness_um: [0.8, 0.8]           # épaisseur (bactéries étudiées : 0,8 µm)
+  sensor_noise_std: 0.015            # bruit capteur relatif au fond (mesuré sur le film réel)
+  reference_nb_planes: 16            # images moyennées pour la référence (bruit σ/√N)
+
+detection:
+  focus_types: [TENEGRAD, SUM_OF_VARIANCE, SUM_OF_GRADIENT, SUM_OF_LAPLACIAN, SUM_OF_INTENSITY,
+                MEAN_ALL, MEAN_LOG_ALL, VAR_IMAG_OVER_REAL]
+  division_power: 0.8                # nettoyage : (holo / référence)^p, comme HOLOTRACKER
+  high_pass: 15                      # filtre spectral : on garde les rayons [15, 250] px de Fourier
+  low_pass: 250
+  sum_size: 11                       # fenêtre des critères de focus (px)
+  mesh_z: 25                         # maille du seuil local (plans)
+  mesh_xy: 64                        # maille du seuil local (px) — optimum mesuré le 2026-10-12
+  clip_kappa: 3.0
+  clip_iterations: 3
+  sigma_floor_percentile: 10
+  k_list: [4, 6, 8, 10, 15, 20, 30, 50, 100, 200]
+  max_objects: 20000                 # au-delà, le seuil est considéré trop bas (volume de bruit)
+  # K retenu pour chaque (N, critère) : celui qui maximise F1 (précision et rappel sommés)
+
+matching:
+  tolerance_xy_um: 3.0               # appariement détection <-> bactérie simulée
+  tolerance_z_um: 5.0
+  peak_box_xy_um: 1.5                # boîte de recherche du pic autour de la position vraie
+  peak_box_z_um: 3.0

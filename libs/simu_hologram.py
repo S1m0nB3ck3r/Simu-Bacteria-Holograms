@@ -107,7 +107,9 @@ def gen_random_bacteria(number_of_bact: int, xyz_min_max: list, thickness_min_ma
         y_positions = (y_max - y_min) * rng.random(number_of_bact) + y_min
         z_positions = (z_max - z_min) * rng.random(number_of_bact) + z_min
 
-        theta_angles = 90.0 * rng.random(number_of_bact)
+        # theta : azimut dans le plan XY, sur le tour complet ; phi : angle polaire à l'axe Z.
+        # Bâtonnet symétrique -> la demi-sphère phi ∈ [0°, 90°] suffit, à condition que theta couvre [0°, 360°).
+        theta_angles = 360.0 * rng.random(number_of_bact)
         phi_angles = 90.0 * rng.random(number_of_bact)
         
         for i in range(number_of_bact):
@@ -135,14 +137,26 @@ def gen_random_sphere(number_of_sphere: int, xyz_min_max: list, radius_min_max: 
         
         return list_bact
 
-def phase_shift_through_plane(mask_plane :cp, plane_to_shift: cp, shift_in_env: float, shift_in_obj: float):
+def phase_shift_through_plane(mask_plane :cp, plane_to_shift: cp, shift_in_env: float, shift_in_obj: float,
+                              attenuation_in_obj: float = 0.0):
+    """
+    Traversée d'une tranche du volume masque : déphasage et, si demandé, atténuation.
 
-    # Interpolation linéaire : masque lissé (0→1) donne un déphasage gradué
-    # Pour masque binaire : résultat identique à l'ancien code
-    # Pour masque lissé  : transition douce du déphasage (anti-aliasing)
+    Interpolation linéaire : masque lissé (0→1) donne un déphasage gradué.
+      - masque binaire : résultat identique à l'ancien code
+      - masque lissé   : transition douce du déphasage (anti-aliasing)
+
+    attenuation_in_obj : atténuation d'amplitude de la tranche, en exposant — l'amplitude est
+    multipliée par exp(−attenuation_in_obj · masque). Les tranches successives se composent donc
+    en la loi de Beer-Lambert sur le trajet parcouru dans l'objet. 0 = objet purement déphasant.
+    Pour un coefficient d'absorption α (en intensité, I = I0·exp(−α·L)) et une tranche dz :
+    attenuation_in_obj = α·dz/2, le facteur 2 venant de I = |amplitude|².
+    """
     mask_f32 = mask_plane.astype(cp.float32)
     shift_plane = mask_f32 * shift_in_obj
 
+    if attenuation_in_obj:
+        return plane_to_shift * cp.exp(1j * shift_plane - attenuation_in_obj * mask_f32)
     return plane_to_shift * cp.exp(1j * shift_plane)
 
 
@@ -164,8 +178,9 @@ def insert_bact_in_mask_volume(mask_volume: np, bact: Bacterie, vox_size_xy: flo
     x_size_upscaled = mask_volume.shape[0]
     y_size_upscaled = mask_volume.shape[1]
 
-    #distance Extremité-centre (en m):
-    long_Demi_Seg = (bact.length - bact.thickness/2.0) / 2.0
+    # demi-longueur du segment intérieur (m) : longueur bout à bout = length (segment length − thickness
+    # + deux demi-sphères de rayon thickness/2) ; plancher : length ≤ thickness donne une sphère
+    long_Demi_Seg = max((bact.length - bact.thickness) / 2.0, 1e-12)
 
 	#calcul des positions des extremités du segment interieur de la bactérie m1 et m2 (positions en m)
     m1_x = bact.pos_x - long_Demi_Seg * math.sin(phi_rad) * math.cos(theta_rad)
@@ -292,28 +307,60 @@ def insert_bact_kernel(mask_volume,
         if distance_squared < threshold * threshold:
             mask_volume[i_x_min + x, i_y_min + y, i_z_min + z] = 1.0
 
-def GPU_insert_bact_in_mask_volume(mask_volume, bact, vox_size_xy, vox_size_z):
+def upscale_grid_shift(vox_size_xy, upscale_factor):
+    """
+    Décalage X/Y à appliquer aux objets écrits dans un volume sur-échantillonné, pour que la
+    grille fine soit alignée sur la grille finale.
+
+    Convention de tout le simulateur : le voxel d'indice i représente la position i·vox (point
+    d'échantillonnage, pas centre de voxel) — c'est celle des noyaux d'insertion et celle que
+    relisent les barycentres de HOLOTRACKER (CCA : indice × taille de voxel).
+
+    Le retour à la grille finale se fait par moyenne de blocs de `up` sous-voxels consécutifs :
+        mask = vol_up.reshape(N, up, N, up, z).mean(axis=(1, 3))
+    Le bloc du pixel grossier i regroupe les sous-voxels i·up … i·up+up−1, soit les positions
+    i·vox … i·vox + (up−1)/up·vox. Ce bloc n'est PAS centré sur i·vox : son centre de masse est
+    en avance de (up−1)/(2·up)·vox. Sans correction, un objet écrit à la position p se retrouve
+    donc relu en p − (up−1)/(2·up)·vox — mesuré : −0,25 voxel pour up = 2, −0,375 pour up = 4,
+    −0,4375 pour up = 8, indépendamment de la position sous-pixellique de l'objet.
+
+    On décale donc l'objet de la moitié du bloc au moment de l'insertion, ce qui revient à
+    décaler l'origine de la grille fine. vox_size_xy est la taille de voxel DU VOLUME FOURNI
+    (donc déjà divisée par upscale_factor) : le décalage vaut (up−1)/2 sous-voxels.
+    """
+    return (upscale_factor - 1) / 2.0 * vox_size_xy
+
+
+def GPU_insert_bact_in_mask_volume(mask_volume, bact, vox_size_xy, vox_size_z, upscale_factor=1):
     phi = math.radians(bact.phi)
     theta = math.radians(bact.theta)
 
-    long_half_seg = (bact.length - bact.thickness / 2.0) / 2.0
+    # longueur bout à bout = length : segment intérieur length − thickness + deux demi-sphères de rayon
+    # thickness/2 (avant le 2026-10-18 : length − thickness/2, soit length + thickness/2 bout à bout) ;
+    # plancher : évite une division par zéro dans le noyau quand length ≤ thickness (sphère)
+    long_half_seg = max((bact.length - bact.thickness) / 2.0, 1e-12)
 
-    m1_x = bact.pos_x - long_half_seg * math.sin(phi) * math.cos(theta)
-    m1_y = bact.pos_y - long_half_seg * math.sin(phi) * math.sin(theta)
+    # alignement grille fine / grille finale (voir upscale_grid_shift) ; sans effet si up = 1
+    shift = upscale_grid_shift(vox_size_xy, upscale_factor)
+    pos_x = bact.pos_x + shift
+    pos_y = bact.pos_y + shift
+
+    m1_x = pos_x - long_half_seg * math.sin(phi) * math.cos(theta)
+    m1_y = pos_y - long_half_seg * math.sin(phi) * math.sin(theta)
     m1_z = bact.pos_z - long_half_seg * math.cos(phi)
 
-    m2_x = bact.pos_x + long_half_seg * math.sin(phi) * math.cos(theta)
-    m2_y = bact.pos_y + long_half_seg * math.sin(phi) * math.sin(theta)
+    m2_x = pos_x + long_half_seg * math.sin(phi) * math.cos(theta)
+    m2_y = pos_y + long_half_seg * math.sin(phi) * math.sin(theta)
     m2_z = bact.pos_z + long_half_seg * math.cos(phi)
 
     m2m1_x = m2_x - m1_x
     m2m1_y = m2_y - m1_y
     m2m1_z = m2_z - m1_z
 
-    x_min = bact.pos_x - bact.length / 2.0 - bact.thickness / 2.0
-    x_max = bact.pos_x + bact.length / 2.0 + bact.thickness / 2.0
-    y_min = bact.pos_y - bact.length / 2.0 - bact.thickness / 2.0
-    y_max = bact.pos_y + bact.length / 2.0 + bact.thickness / 2.0
+    x_min = pos_x - bact.length / 2.0 - bact.thickness / 2.0
+    x_max = pos_x + bact.length / 2.0 + bact.thickness / 2.0
+    y_min = pos_y - bact.length / 2.0 - bact.thickness / 2.0
+    y_max = pos_y + bact.length / 2.0 + bact.thickness / 2.0
     z_min = bact.pos_z - bact.length / 2.0 - bact.thickness / 2.0
     z_max = bact.pos_z + bact.length / 2.0 + bact.thickness / 2.0
 
@@ -355,10 +402,10 @@ def insert_sphere_in_mask_volume(mask_volume, sphere: Sphere, vox_size_xy: float
       - les coordonnées de la sphère sont exprimées dans ce même repère,
         c'est-à-dire dans le volume central.
 
-    upscale_factor n'intervient plus dans le calcul des index : c'est à
-    l'appelant de fournir la taille de voxel correspondant au volume qu'il
-    passe (comme le fait déjà le chemin bactéries). Le paramètre est conservé
-    pour compatibilité d'appel.
+    upscale_factor n'intervient pas dans le calcul des index — c'est à l'appelant
+    de fournir la taille de voxel correspondant au volume qu'il passe (comme le
+    fait déjà le chemin bactéries) — mais il sert à aligner la grille fine sur la
+    grille finale : voir upscale_grid_shift().
 
     Fonctionne indifféremment sur un tableau NumPy ou CuPy.
     """
@@ -366,11 +413,16 @@ def insert_sphere_in_mask_volume(mask_volume, sphere: Sphere, vox_size_xy: float
 
     x_size, y_size, z_size = mask_volume.shape
 
+    # alignement grille fine / grille finale (voir upscale_grid_shift) ; sans effet si up = 1
+    shift = upscale_grid_shift(vox_size_xy, upscale_factor)
+    pos_x = sphere.pos_x + shift
+    pos_y = sphere.pos_y + shift
+
     # Box englobante de la sphère, en index de voxels
-    i_x_min = max(0,      int(math.floor((sphere.pos_x - sphere.radius) / vox_size_xy)))
-    i_x_max = min(x_size, int(math.ceil( (sphere.pos_x + sphere.radius) / vox_size_xy)) + 1)
-    i_y_min = max(0,      int(math.floor((sphere.pos_y - sphere.radius) / vox_size_xy)))
-    i_y_max = min(y_size, int(math.ceil( (sphere.pos_y + sphere.radius) / vox_size_xy)) + 1)
+    i_x_min = max(0,      int(math.floor((pos_x - sphere.radius) / vox_size_xy)))
+    i_x_max = min(x_size, int(math.ceil( (pos_x + sphere.radius) / vox_size_xy)) + 1)
+    i_y_min = max(0,      int(math.floor((pos_y - sphere.radius) / vox_size_xy)))
+    i_y_max = min(y_size, int(math.ceil( (pos_y + sphere.radius) / vox_size_xy)) + 1)
     i_z_min = max(0,      int(math.floor((sphere.pos_z - sphere.radius) / vox_size_z)))
     i_z_max = min(z_size, int(math.ceil( (sphere.pos_z + sphere.radius) / vox_size_z)) + 1)
 
@@ -379,8 +431,8 @@ def insert_sphere_in_mask_volume(mask_volume, sphere: Sphere, vox_size_xy: float
         return mask_volume
 
     # Distances au centre, calculées sur la seule box englobante
-    dx = xp.arange(i_x_min, i_x_max, dtype=xp.float32) * vox_size_xy - sphere.pos_x
-    dy = xp.arange(i_y_min, i_y_max, dtype=xp.float32) * vox_size_xy - sphere.pos_y
+    dx = xp.arange(i_x_min, i_x_max, dtype=xp.float32) * vox_size_xy - pos_x
+    dy = xp.arange(i_y_min, i_y_max, dtype=xp.float32) * vox_size_xy - pos_y
     dz = xp.arange(i_z_min, i_z_max, dtype=xp.float32) * vox_size_z  - sphere.pos_z
 
     inside = (dx[:, None, None] ** 2
@@ -405,6 +457,30 @@ def pad_centered(array, target_shape):
 
     padded = cp.pad(array, ((pad_x_before, pad_x_after), (pad_y_before, pad_y_after)), mode='constant')
     return padded
+
+
+def apodize_border(field, border):
+    """
+    Apodise un champ 2D (bordure comprise) par une fenêtre de Tukey : 1 au centre,
+    décroissance en cosinus jusqu'à 0 sur les border//2 pixels extérieurs de chaque bord.
+
+    Supprime le saut de phase au raccord périodique de la FFT (onde plane inclinée dont
+    l'angle ne tombe pas sur une fréquence de la grille), qui sinon crée des franges
+    jusque dans la zone utile. La décroissance s'arrête à border//2 du bord de la zone
+    utile : la diffraction de la fenêtre n'y assombrit pas l'intensité.
+    """
+    width = border // 2
+    if width <= 0:
+        return field
+
+    def tukey_1d(size):
+        w = cp.ones(size, dtype=cp.float32)
+        taper = 0.5 * (1.0 - cp.cos(cp.pi * cp.arange(width, dtype=cp.float32) / width))
+        w[:width] = taper
+        w[size - width:] = taper[::-1]
+        return w
+
+    return field * cp.outer(tukey_1d(field.shape[0]), tukey_1d(field.shape[1]))
 
 
 def save_holo_data(filepath_npz, hologram_volume: np.ndarray,
@@ -469,7 +545,7 @@ def save_volume_as_tiff(filepath_tiff, hologram_volume: np.ndarray):
 def create_illumination_field(field_size_xy_pix: int, wavelength: float, pixel_size: float, medium_index: float,
                               magnification: float,
                               number_of_sources: int, sources_angle_degree_X: list[float], sources_angle_degree_Y: list[float],
-                              noise_mean: float = 1.0, noise_std: float = 0.05) -> cp.ndarray:
+                              noise_mean: float = 1.0, noise_std: float = 0.0) -> cp.ndarray:
     """
     Crée un champ d'illumination 2D multi-sources avec bruit gaussien sur l'amplitude
     et phase de départ aléatoire.
@@ -487,7 +563,9 @@ def create_illumination_field(field_size_xy_pix: int, wavelength: float, pixel_s
         sources_angle_degree_X : angles d'inclinaison selon X (degrés)
         sources_angle_degree_Y : angles d'inclinaison selon Y (degrés)
         noise_mean        : moyenne du bruit gaussien sur l'amplitude (défaut=1.0)
-        noise_std         : écart-type du bruit gaussien sur l'amplitude (défaut=0.05)
+        noise_std         : écart-type du bruit gaussien sur l'amplitude (défaut=0.0). Laisser à 0 :
+                            ce bruit blanc spatial n'est pas physique ; le bruit est simulé par
+                            add_sensor_noise() sur l'intensité, après propagation.
 
     Returns:
         cp.ndarray: champ complexe 2D (complex64)
@@ -542,7 +620,7 @@ def create_illumination_field_polar(
     sources_polar_degree: list[float],   # angle polaire
     sources_azimuth_degree: list[float],     # azimut
     noise_mean: float = 1.0,
-    noise_std: float = 0.05
+    noise_std: float = 0.0
 ) -> cp.ndarray:
 
     effective_pixel_size = pixel_size / magnification
@@ -581,6 +659,25 @@ def create_illumination_field_polar(
     field *= amplitude_noise
 
     return field
+
+
+def add_sensor_noise(intensity, noise_std: float, background_intensity: float = 1.0, rng=None):
+    """
+    Bruit du capteur : bruit gaussien additif sur l'intensité |E|² de l'hologramme, après propagation.
+    Écart-type = noise_std · background_intensity (noise_std est relatif au fond sans objet).
+    Mesuré sur le film réel (REAL HOLO FILM, 2026-10-12) : noise_std ≈ 0,015.
+
+    intensity            : intensité NumPy ou CuPy (bruit tiré sur CPU, rendu dans le type d'entrée)
+    noise_std            : écart-type relatif au fond ; 0 = pas de bruit
+    background_intensity : intensité du fond sans objet (illumination_mean² en amplitude)
+    rng                  : numpy.random.Generator (reproductibilité) ; None = nouveau générateur
+    """
+    if noise_std <= 0:
+        return intensity
+    rng = np.random.default_rng() if rng is None else rng
+    noise = rng.normal(0.0, noise_std * background_intensity, intensity.shape).astype(np.float32)
+    return intensity + (cp.asarray(noise) if isinstance(intensity, cp.ndarray) else noise)
+
 
 def smooth_volume_gaussian_gpu(cp_mask_volume, sigma=0.5):
     """

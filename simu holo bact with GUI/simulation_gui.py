@@ -46,18 +46,20 @@ class SimulationGUI:
             "transmission_milieu": 1.0,
             "index_milieu": 1.33,
             "index_bacterie": 1.335,
-            "longueur_min": 3.0e-6,
-            "longueur_max": 4.0e-6,
-            "epaisseur_min": 1.0e-6,
-            "epaisseur_max": 2.0e-6,
+            "longueur_min": 1.5e-6,
+            "longueur_max": 2.0e-6,
+            "epaisseur_min": 0.8e-6,
+            "epaisseur_max": 0.8e-6,
             "pix_size": 5.5e-6,
             "grossissement": 40,
-            "distance_volume_camera": 0.01,  # Distance volume-caméra en mètres (1 cm par défaut)
+            "distance_volume_camera": 0.0,  # Distance volume-caméra en mètres, espace objet
             "step_z": 0.5e-6,
             "wavelength": 660e-9,
             "illumination_mean": 1.0,
-            "ecart_type_min": 0.01,
-            "ecart_type_max": 0.1,
+            # Bruit capteur : écart-type relatif au fond, ajouté à l'intensité après propagation
+            # (mesuré sur film réel : 0,015)
+            "sensor_noise_std_min": 0.015,
+            "sensor_noise_std_max": 0.015,
             # Options de sauvegarde
             "save_hologram_bmp": True,
             "save_hologram_tiff": False,
@@ -66,7 +68,9 @@ class SimulationGUI:
             "save_propagated_npy": False,
             "save_segmentation_tiff": True,
             "save_segmentation_npy": False,
-            "save_positions_csv": True
+            "save_positions_csv": True,
+            "save_holo_ref": False,
+            "holo_ref_nb_planes": 1
         }
         
         self.load_or_create_config()
@@ -86,6 +90,9 @@ class SimulationGUI:
             try:
                 with open(self.config_file, 'r') as f:
                     self.params = json.load(f)
+                # Bruit d'illumination supprimé : anciennes clés retirées
+                for old in ('ecart_type_min', 'ecart_type_max'):
+                    self.params.pop(old, None)
                 # Ajoute les paramètres manquants
                 for key, value in self.default_params.items():
                     if key not in self.params:
@@ -162,7 +169,7 @@ class SimulationGUI:
         row += 1
         self.add_entry(scrollable_frame, row, "Taille XY hologramme (pixels)", "holo_size_xy", int)
         row += 1
-        self.add_entry(scrollable_frame, row, "Bordure (pixels)", "border", int)
+        self.add_entry(scrollable_frame, row, "Apodisation bordure (pixels)", "border", int)
         row += 1
         self.add_entry(scrollable_frame, row, "Facteur upscale", "upscale_factor", int)
         row += 1
@@ -226,9 +233,9 @@ class SimulationGUI:
         
         self.add_entry(scrollable_frame, row, "Moyenne illumination", "illumination_mean", float)
         row += 1
-        self.add_entry(scrollable_frame, row, "Écart-type min", "ecart_type_min", float)
+        self.add_entry(scrollable_frame, row, "Bruit capteur min (σ relatif)", "sensor_noise_std_min", float)
         row += 1
-        self.add_entry(scrollable_frame, row, "Écart-type max", "ecart_type_max", float)
+        self.add_entry(scrollable_frame, row, "Bruit capteur max (σ relatif)", "sensor_noise_std_max", float)
         row += 1
         
         # Section SAVING
@@ -254,6 +261,12 @@ class SimulationGUI:
         self.add_checkbox(scrollable_frame, row, "Volume segmentation bool NPY", "save_segmentation_npy")
         row += 1
         self.add_checkbox(scrollable_frame, row, "Positions bactéries CSV", "save_positions_csv")
+        row += 1
+        self.add_checkbox(scrollable_frame, row,
+                          "Hologramme de référence sans objet → holo_ref/ (mêmes formats que l'hologramme)",
+                          "save_holo_ref")
+        row += 1
+        self.add_entry(scrollable_frame, row, "Nb illuminations pour la référence moyennée", "holo_ref_nb_planes", int)
         row += 1
         
         # Bouton génération

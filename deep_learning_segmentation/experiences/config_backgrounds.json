@@ -1,0 +1,72 @@
+{
+  "film_dir": "REAL HOLO FILM/bacterias",
+  "image_extension": "bmp",
+  "trajectories_csv": "REAL HOLO FILM/bacterias/TRAJECTORIES_20261016_173113.csv",
+  "first_hologram_number": 1,
+  "first_frame": 0,
+  "max_frames": 0,
+  "output_dir": "deep_learning_segmentation/data/backgrounds",
+  "optics": {
+    "wavelength_nm": 660.0,
+    "index_medium": 1.33,
+    "pixel_size_um": 7.0,
+    "magnification": 40.0
+  },
+  "background": {
+    "mean_file": "",
+    "removal": "division"
+  },
+  "cleaning": {
+    "enabled": true,
+    "border": 256,
+    "window_radius_um": 1.5,
+    "window_taper_um": 0.5,
+    "passes": 2,
+    "high_pass": 15,
+    "low_pass": 0,
+    "gain": 1.0,
+    "clean_unassigned": true,
+    "unassigned_min_voxel": 50,
+    "min_z_um": 2.0,
+    "measure_detections": false,
+    "residual": {
+      "enabled": true,
+      "iterations": 2,
+      "distance_ini_um": 0.0,
+      "nb_planes": 200,
+      "step_um": 0.5,
+      "high_pass": 15,
+      "low_pass": 250,
+      "sum_size": 11,
+      "k_local": 15.0,
+      "mesh_z": 25,
+      "mesh_xy": 64,
+      "max_objects": 300
+    }
+  },
+  "simulation": {
+    "enabled": false,
+    "length_um": 1.8,
+    "thickness_um": 0.6,
+    "delta_n": 0.046,
+    "step_um": 0.5,
+    "upscale_factor": 2,
+    "border": 256,
+    "chunk_planes": 24,
+    "orientation_half_window": 5,
+    "min_points_orientation": 3,
+    "simulate_unassigned": false,
+    "unassigned_min_voxel": 200,
+    "measure_contrast": true,
+    "seed": 0
+  },
+  "outputs": {
+    "mean": true,
+    "background": true,
+    "cleaned_bacteria": false,
+    "simulated_bacteria": false,
+    "simulated_on_background": false,
+    "bmp": false,
+    "tiff": true
+  }
+}

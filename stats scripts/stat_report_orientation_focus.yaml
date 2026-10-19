@@ -1,0 +1,162 @@
+# =============================================================================
+# stat_report_orientation_focus — erreur de position en fonction de l'orientation, PAR CRITÈRE DE FOCUS
+# Lancer : python stats/stat_report_orientation_focus.py stats/stat_report_orientation_focus.yaml
+#
+# Une bactérie à distance Z fixe, dont l'orientation est balayée (φ, θ). Chaque hologramme est
+# simulé UNE fois, puis détecté avec chacun des critères de sweep.focus_types : tous les critères
+# voient les mêmes hologrammes. Sortie : report.png = erreurs X, Y, Z, latérale et 3D en fonction
+# de φ, une courbe par critère.
+#
+# Tous les paramètres sont obligatoires. Nombres : notation scientifique acceptée.
+# Repère : x, y = ceux de l'image analysée (x = colonne, y = ligne, comme HOLOTRACKER) ;
+#          Z = distance du centre de la bactérie à l'hologramme.
+#
+# Durée : ~2 à 4 s par détection (MEAN_ALL et MEAN_LOG_ALL plus lents).
+# Réglage par défaut : 10 φ × 1 θ × 10 tirages de bruit = 100 hologrammes × 8 critères ≈ 35 min.
+# Un seul azimut : la chaîne est symétrique en X / Y (vérifié le 2026-10-13, masques et erreurs
+# identiques sans bruit pour θ = 0° et 90°) ; 10 tirages pour mesurer la dispersion due au bruit.
+# =============================================================================
+
+sweep:
+  # Distance Z fixe du centre de la bactérie à l'hologramme (µm). Réel > longueur / 2.
+  z_um: 50
+  # Balayage de φ (°) : angle entre l'axe de la bactérie et l'axe optique, de phi_start_deg à
+  #   phi_stop_deg inclus, par pas de phi_step_deg. 0 = alignée avec l'axe optique, 90 = couchée.
+  #   Réels dans [0, 90] (au-delà de 90 : symétrique), pas > 0.
+  phi_start_deg: 0
+  phi_stop_deg: 90
+  phi_step_deg: 10
+  # Balayage de θ (°) : azimut, direction de l'inclinaison dans le plan de l'image, mesuré depuis
+  #   l'axe x, de theta_start_deg à theta_stop_deg inclus, par pas de theta_step_deg.
+  #   0 = la bactérie penche vers x (plan x-z) ; 90 = vers y (plan y-z). Réels, pas > 0.
+  #   Pour ne garder qu'un seul azimut : start = stop (le pas est alors sans effet, mais requis).
+  #   Attention : le nombre d'hologrammes est le produit des deux balayages.
+  theta_start_deg: 0
+  theta_stop_deg: 0
+  theta_step_deg: 90
+  # Critères de focus comparés (liste). Valeurs possibles : TENEGRAD, SUM_OF_VARIANCE,
+  #   SUM_OF_LAPLACIAN, SUM_OF_INTENSITY, SUM_OF_GRADIENT, MEAN_ALL, MEAN_LOG_ALL,
+  #   VAR_IMAG_OVER_REAL (champ complexe).
+  focus_types: [TENEGRAD, SUM_OF_VARIANCE, SUM_OF_GRADIENT, SUM_OF_LAPLACIAN, SUM_OF_INTENSITY,
+                MEAN_ALL, MEAN_LOG_ALL, VAR_IMAG_OVER_REAL]
+
+bacterium:
+  # Taille de la bactérie (µm). Réels > 0. Longueur totale, extrémités hémisphériques comprises.
+  length_um: 1.6
+  thickness_um: 0.8
+  # Position latérale du centre (µm), repère de l'image. Réels dans [0, champ[ ;
+  #   champ = holo_size × pixel_size_um / magnification (179,2 µm par défaut). Centre : 89,6.
+  x_um: 89.6
+  y_um: 89.6
+  # (pas de tilt_plane ici : le plan d'inclinaison est donné par le balayage sweep.theta_*)
+
+simulation:
+  # Taille de l'hologramme (px). Entier > 0 (256, 512, 1024, 2048...).
+  holo_size: 1024
+  # Bordure de calcul autour de l'hologramme (px), avec apodisation sur sa moitié extérieure.
+  #   Entier >= 0. 512 recommandé en 1024² (voir le simulateur).
+  border: 512
+  # Sur-échantillonnage XY du masque de la bactérie avant moyennage (anti-crénelage). Entier >= 1.
+  upscale_factor: 2
+  # Caméra et optique.
+  pixel_size_um: 7.0        # pixel du capteur (µm). Réel > 0.
+  magnification: 40         # grossissement. Réel > 0. Pixel côté objet = pixel_size_um / magnification.
+  wavelength_nm: 660        # longueur d'onde dans le vide (nm). Réel > 0.
+  index_medium: 1.33        # indice du milieu. Réel >= 1.
+  index_object: 1.335      # indice de l'objet (bactérie). Réel. Déphasage par tranche = 2π·dz·Δn/λ.
+  # Absorption de l'objet : % d'intensité perdus par micromètre de matière traversée.
+  #   Réel dans [0, 100[. Après un trajet de L µm dans l'objet, il reste (1 − %/100)^L.
+  #     0    objet transparent, purement déphasant (cas de la bactérie dans l'eau)
+  #     10   il reste 90 % après 1 µm, 59 % après 5 µm
+  #     50   il reste 50 % après 1 µm, 3 % après 5 µm
+  #     99   quasi opaque : il reste 1 % après 1 µm
+  absorption_percent_per_um: 0.0
+  # Pas des tranches traversées par la bactérie (µm). Réel > 0. Simulateur : 0,5.
+  sim_step_um: 0.25
+  # Distance à l'hologramme où part l'illumination = face lointaine de l'échantillon (µm).
+  #   Réel > Z + longueur / 2. Le simulateur part de z_size·dz + distance volume-caméra.
+  illumination_distance_um: 110
+  # Amplitude de l'illumination (onde plane, sans bruit : le fond fixe réel est retiré par la
+  #   division par la moyenne du film ; seul le bruit du capteur est simulé, voir sensor_noise_std_*).
+  illumination_mean: 1.0
+  # Hologramme de référence = moyenne de N images du film (sans objet) : le bruit
+  #   du capteur y est réduit à σ/√N. Entier >= 1.
+  reference_nb_planes: 16
+  # Bruit du capteur : gaussien, ajouté à l'intensité de l'hologramme APRÈS propagation (et à chacune
+  #   des images de la référence). Écart-type relatif au fond, tiré dans [min, max] pour chaque
+  #   hologramme. Mesuré sur le film réel : 0,015. Réels >= 0 ; 0 = pas de bruit.
+  sensor_noise_std_min: 0.015
+  sensor_noise_std_max: 0.015
+  # Direction de l'illumination (°) : azimut et angle polaire (0, 0 = éclairage droit).
+  source_azimuth_deg: 0
+  source_polar_deg: 0
+
+detection:
+  # Chaîne HOLOTRACKER (mêmes paramètres que stats/GUI_holo_stats.py).
+  # Nettoyage par l'hologramme de référence : division | subtraction | none
+  cleaning: division
+  # Puissance après division (ignorée sinon). Réel > 0. HOLOTRACKER : 0.8.
+  division_power: 0.8
+  # Plans reconstruits : de distance_ini_um, nb_planes plans, pas step_um.
+  #   Doit contenir sweep.z_um. Mémoire GPU : nb_planes × holo_size² × 4 octets.
+  distance_ini_um: 0
+  nb_planes: 200
+  step_um: 0.5
+  # Filtre spectral : rayons min et max conservés (px de fréquence). Entiers >= 0 ; 0 = pas de borne.
+  high_pass: 15
+  low_pass: 250
+  # Taille du noyau de sommation du focus (px). Entier > 0.
+  sum_size: 11
+  # Type de seuil : seuil = centre + nb_std_threshold × dispersion du volume de focus.
+  #   STD_VAR : moyenne + n × écart-type (comme HOLOTRACKER). Sensible aux objets eux-mêmes :
+  #             leur réponse fait monter l'écart-type, donc le seuil.
+  #   MAD     : médiane + n × 1,4826 × MAD (écart absolu médian), estimateurs robustes, peu
+  #             sensibles aux voxels forts des objets. Calculé sur 1 pixel sur 4 en x et en y.
+  #   MAX_FOCUS : n × voxel max du volume de focus ; n est alors une fraction dans ]0, 1]
+  #             (0,5 = moitié du max). Indépendant du fond,
+  #             mais lié à l'objet le plus fort du volume.
+  #   PEAK_ABOVE_BG : fond (médiane) + n × (voxel max − fond) ; n dans ]0, 1] (0,5 = mi-hauteur
+  #             du pic au-dessus du fond). Ne dépend pas du niveau du fond : à utiliser pour comparer
+  #             des critères de focus entre eux, avec un seul objet dans le volume.
+  #   Les valeurs de nb_std_threshold ne sont pas comparables d'un type à l'autre.
+  # Pour comparer les critères : PEAK_ABOVE_BG 0,5 (mi-hauteur du pic au-dessus du fond, même règle
+  #   pour tous). MAX_FOCUS 0,5 ne convient pas : pour un critère dont le fond est élevé par rapport
+  #   au pic (TENEGRAD, laplacien), la moitié du max coupe dans le fond (centaines d'objets).
+  #   Les seuils en nombre de dispersions (STD_VAR, MAD) ne sont pas comparables d'un critère à l'autre.
+  threshold_type: PEAK_ABOVE_BG
+  # nb_std_threshold : nombre de dispersions au-dessus du centre. Réel.
+  nb_std_threshold: 0.5
+  # Connectivité 3D : 6 | 18 | 26
+  connectivity: 26
+  # Filtre sur la taille des objets (voxels). Entiers >= 0 ; 0 = pas de borne.
+  min_voxel: 0
+  max_voxel: 0
+
+matching:
+  # Tolérances d'appariement entre la bactérie simulée et un objet détecté (µm). Réels > 0.
+  #   Une bactérie alignée sur l'axe optique donne souvent deux blocs à environ ±4 µm en z :
+  #   l'un est apparié, l'autre compté comme doublon.
+  tolerance_xy_um: 3.0
+  tolerance_z_um: 5.0
+
+run:
+  # Répétitions par angle (nouveau tirage du bruit à chaque fois). Entier >= 1.
+  #   > 1 : moyenne ± écart-type sur les graphes.
+  repeats: 10
+  # Graine du générateur aléatoire (bruit). Entier. Même graine = mêmes hologrammes.
+  seed: 0
+  # Afficher les graphes à la fin : true | false (ils sont toujours enregistrés en PNG).
+  show_plots: true
+
+output:
+  # Dossier de sortie. null : output/stat_report_orientation_<date>/ (dossier ignoré par git).
+  #   Chemin relatif : par rapport au dossier de ce fichier.
+  output_dir: null
+  # Enregistrer une image de contrôle par hologramme : true | false. Écrite dans objects/.
+  #   Contenu : hologramme nettoyé avec les objets détectés et la bactérie simulée, vue x–z,
+  #   et l'erreur de position x, y, z dans le titre. Utile pour comprendre les non-détections ;
+  #   à laisser false pour un balayage complet (~0,3 Mo par hologramme).
+  save_objects: false
+  # Enregistrer l'hologramme et sa référence (TIFF float32) de chaque simulation : true | false.
+  #   ~8 Mo par hologramme en 1024².
+  save_holograms: false

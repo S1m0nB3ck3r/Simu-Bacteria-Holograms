@@ -1,0 +1,37 @@
+{
+  "name": "stage2_sim",
+  "data": "deep_learning_segmentation/data/seg_sim",
+  "out": "deep_learning_segmentation/runs_v2",
+  "iters": 6000,
+  "lr": 0.001,
+  "warmup": 200,
+  "holos_per_step": 2,
+  "crops_per_holo": 16,
+  "neg_fraction": 0.1,
+  "mid_fraction": 0.15,
+  "jitter_xy": 0.25,
+  "jitter_z": 0.5,
+  "vmin": 20,
+  "base": 16,
+  "depth": 3,
+  "eval_every": 500,
+  "val_limit": 12,
+  "seed": 0,
+  "grid": {
+    "z0_um": 0.0,
+    "step_z_um": 1.0,
+    "nb_planes": 208,
+    "decim": 2
+  },
+  "fine": {
+    "nz": 32,
+    "nxy": 40,
+    "dz_um": 0.25
+  },
+  "mask_grid": {
+    "dz_um": 0.25,
+    "dx_um": 0.175,
+    "frac_levels": 4
+  },
+  "n_params": 1423267
+}

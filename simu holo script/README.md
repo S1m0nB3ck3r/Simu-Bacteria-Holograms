@@ -75,10 +75,10 @@ Génère des hologrammes avec bactéries aléatoires.
     "mode": "bacteria_random",
     "nb_holo": 100,
     "nb_objects": 50,
-    "length_min": 3.0e-6,
-    "length_max": 4.0e-6,
-    "thickness_min": 1.0e-6,
-    "thickness_max": 2.0e-6
+    "length_min": 1.5e-6,
+    "length_max": 2.0e-6,
+    "thickness_min": 0.8e-6,
+    "thickness_max": 0.8e-6
 }
 ```
 
@@ -95,8 +95,8 @@ Génère des hologrammes avec bactéries à positions prédéfinies.
             "pos_x": 1.0e-5,
             "pos_y": 1.0e-5,
             "pos_z": 5.0e-5,
-            "length": 3.0e-6,
-            "thickness": 1.0e-6,
+            "length": 1.75e-6,
+            "thickness": 0.8e-6,
             "theta": 0.0,
             "phi": 0.0
         }
@@ -161,8 +161,8 @@ Génère des hologrammes avec sphères à positions prédéfinies.
 | Paramètre | Description | Défaut |
 |-----------|-------------|--------|
 | `illumination_mean` | Niveau moyen d'illumination | 1.0 |
-| `noise_std_min` | Bruit minimum (std) | 0.01 |
-| `noise_std_max` | Bruit maximum (std) | 0.1 |
+| `sensor_noise_std_min` | Bruit capteur minimum (std relatif au fond, ajouté à l'intensité après propagation) | 0.015 |
+| `sensor_noise_std_max` | Bruit capteur maximum (std relatif au fond) | 0.015 |
 
 ### Paramètres de sauvegarde
 Voir [CONFIG_SAVE_OPTIONS.md](docs/CONFIG_SAVE_OPTIONS.md)

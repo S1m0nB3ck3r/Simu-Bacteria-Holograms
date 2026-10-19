@@ -16,8 +16,8 @@
     "wavelength": 660e-9,
     
     "illumination_mean": 10.0,
-    "noise_std_min": 0.01,
-    "noise_std_max": 0.1,
+    "sensor_noise_std_min": 0.015,
+    "sensor_noise_std_max": 0.015,
     "number_of_sources": 1,
     "sources_angle_azimuth": [0.0],
     "sources_angle_polar": [0.0],
@@ -40,8 +40,8 @@
             "pos_x": 70.4e-6,
             "pos_y": 70.4e-6,
             "pos_z": 5.0e-5,
-            "length": 3.0e-6,
-            "thickness": 1.0e-6,
+            "length": 1.75e-6,
+            "thickness": 0.8e-6,
             "theta": 0.0,
             "phi": 0.0
         }

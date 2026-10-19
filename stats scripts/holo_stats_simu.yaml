@@ -1,0 +1,95 @@
+# =============================================================================
+# holo_stats — configuration pour un HOLOGRAMME SIMULÉ
+# Lancer : python stats/holo_stats.py stats/holo_stats_simu.yaml
+#
+# Tous les paramètres sont obligatoires. Chemins relatifs : par rapport au dossier
+# de ce fichier. Nombres : notation scientifique acceptée (660e-9 ou 6.6e-7).
+# Optique et propagation : reprendre les valeurs de parameters_simu_bact.json (GUI)
+# ou du config JSON (script) utilisés pour la simulation.
+# Détection : mêmes valeurs que holo_stats_real.yaml, pour comparer à chaîne identique.
+# =============================================================================
+
+inputs:
+  # Hologramme à analyser.
+  #   Formats : .bmp, .png, .tif, .tiff, .npy (image 2D). Recadré au centre sur holo_size_x × holo_size_y.
+  #   Simulation : .tiff / .npy = intensité flottante brute ; .bmp = normalisé min-max sur 0-255.
+  #   GUI    : <sortie>/simulated_hologram/holo_<n>.tiff
+  #   Script : <sortie>/simulated_hologram/holo_<n>_az<azimut>_pol<polaire>.tiff
+  hologram: "C:/Users/becker14/Documents/test_SIMU_GUI/AAAA_MM_JJ_HH_MM_SS/simulated_hologram/holo_0.tiff"
+
+  # Hologramme de référence :
+  #   - un fichier image (mêmes formats que hologram), à la même échelle que l'hologramme ;
+  #   - ou un dossier : moyenne arithmétique de toutes les images ayant l'extension de hologram.
+  #   Simulation : <sortie>/holo_ref/holo_ref_<id>.tiff (option « Hologramme de référence » cochée).
+  #   Utiliser le même format que hologram : le BMP de référence est normalisé avec le min/max
+  #   de l'hologramme, ce qui introduit un décalage qui fausse la division.
+  reference: "C:/Users/becker14/Documents/test_SIMU_GUI/AAAA_MM_JJ_HH_MM_SS/holo_ref/holo_ref_0.tiff"
+
+  # Dossier de sortie.
+  #   - null : <dossier de l'hologramme>/<nom de l'hologramme>_stats_<date>/
+  #   - un chemin : utilisé tel quel (créé si besoin, fichiers écrasés)
+  output_dir: null
+
+cleaning:
+  # Nettoyage de l'hologramme par la référence (identique à HOLOTRACKER) :
+  #   - division    : holo / ref, puis puissance division_power
+  #   - subtraction : holo - ref, puis retrait du minimum (valeurs positives)
+  #   - none        : hologramme brut (la référence est lue pour ses statistiques seulement)
+  type: division
+
+  # Puissance appliquée après division (ignorée sinon).
+  #   Réel > 0. HOLOTRACKER : 0.8. 1.0 = division pure.
+  division_power: 0.8
+
+optics:
+  # Longueur d'onde dans le vide (m). Réel > 0. Simulation : wavelength.
+  wavelength: 660e-9
+  # Indice du milieu. Réel >= 1. Simulation : index_milieu (GUI) / index_medium (script).
+  medium_index: 1.33
+  # Taille du pixel caméra (m). Réel > 0. Simulation : pix_size.
+  pixel_size: 5.5e-6
+  # Grossissement. Réel > 0. Simulation : grossissement (GUI) / magnification (script).
+  magnification: 40
+  # Taille de la zone analysée (pixels). Entier > 0, <= taille de l'image. Simulation : holo_size_xy.
+  holo_size_x: 1024
+  holo_size_y: 1024
+
+propagation:
+  # Distance du premier plan reconstruit à l'hologramme (m). Réel.
+  #   Simulation : le volume occupe [distance_volume_camera, distance_volume_camera + z_size × pas].
+  #   Mettre distance_volume_camera pour que le plan 0 soit la face du volume côté caméra.
+  distance_ini: 10e-6
+  # Nombre de plans reconstruits. Entier > 0. Simulation : z_size pour couvrir tout le volume.
+  #   Mémoire GPU : nb_planes × holo_size_x × holo_size_y × 4 octets (200 plans ≈ 800 Mo).
+  nb_planes: 200
+  # Pas entre plans (m). Réel > 0. Simulation : step_z (GUI) / z_step (script).
+  step: 0.5e-6
+  # Filtre spectral passe-bande, en pixels de fréquence depuis le centre du spectre.
+  #   high_pass : rayon minimal conservé ; low_pass : rayon maximal conservé.
+  #   Entiers >= 0 avec high_pass < low_pass. 0 et 0 = pas de filtrage.
+  high_pass: 15
+  low_pass: 125
+
+detection:
+  # Critère de netteté appliqué au volume :
+  #   TENEGRAD | SUM_OF_VARIANCE | SUM_OF_LAPLACIAN | SUM_OF_INTENSITY |
+  #   SUM_OF_GRADIENT | MEAN_ALL | MEAN_LOG_ALL | VAR_IMAG_OVER_REAL
+  #   VAR_IMAG_OVER_REAL : var. locale(Im) / var. locale(Re) du champ complexe reconstruit
+  #   (porteuse retirée), pour objets de phase ; fond ≈ 1, sans unité.
+  focus_type: TENEGRAD
+  # Taille du noyau de sommation du focus (pixels). Entier > 0.
+  sum_size: 11
+  # Seuil = moyenne + nb_std_threshold × écart-type du volume de focus. Réel.
+  nb_std_threshold: 14
+  # Connectivité 3D des composantes connexes : 6 | 18 | 26
+  connectivity: 26
+  # Filtre sur la taille des objets (voxels). Entier >= 0. 0 = pas de borne.
+  min_voxel: 0
+  max_voxel: 0
+
+analysis:
+  # Écart-type (pixels) du lissage gaussien qui estime l'enveloppe d'éclairage. Réel > 0.
+  envelope_sigma: 50
+  # Sous-échantillonnage XY pour les statistiques CPU du volume (médiane, percentiles).
+  #   Entier >= 1. 1 = tout le volume (lent, ~800 Mo en RAM) ; 4 = 1 voxel sur 16.
+  subsample_xy: 4

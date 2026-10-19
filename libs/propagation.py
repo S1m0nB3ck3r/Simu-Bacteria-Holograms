@@ -28,6 +28,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 import math
+import cmath
+import numpy as np
 import cupy as cp
 from cupy.fft import fft2, ifft2, fftshift, ifftshift
 from cupyx import jit
@@ -87,12 +89,15 @@ def d_filter_FFT(d_plan_IN, d_plan_OUT, sizeX, sizeY, dMin, dMax):
 
 @jit.rawkernel()
 def d_spec_filter_FFT(d_plan_IN, d_plan_OUT, sizeX, sizeY, dMin, dMax):
+    # Aligné sur HOLOTRACKER (code_locate/propagation.py) :
+    #  - bornes incluses : on garde dMin <= r <= dMax ;
+    #  - une borne à 0 signifie « pas de limite de ce côté » ;
+    #  - ii = index - jj * sizeX (l'ancien « jj * sizeY » était faux pour une image non carrée).
 
     index = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
-    sizeXY = sizeX * sizeY
 
     jj = cp.int32(index) // cp.int32(sizeX)
-    ii = cp.int32(index) - cp.int32(jj * sizeY)
+    ii = cp.int32(index) - cp.int32(jj * sizeX)
 
     if (ii < sizeX and jj < sizeY):
         #calc distance
@@ -101,11 +106,10 @@ def d_spec_filter_FFT(d_plan_IN, d_plan_OUT, sizeX, sizeY, dMin, dMax):
 
         distanceCentre = cp.sqrt((centreX - ii)*(centreX - ii) + (centreY - jj)*(centreY - jj))
 
-        if ((distanceCentre > dMin) and (distanceCentre < dMax )):
-            #d_plan_OUT[ii, jj] = d_plan_IN[ii, jj] * cp.log(1 + (distanceCentre - dMin)/ (dMax - dMin))
-            d_plan_OUT[jj, ii] = d_plan_IN[jj, ii]
-        else:
+        if (dMin != 0 and distanceCentre < dMin) or (dMax != 0 and distanceCentre > dMax):
             d_plan_OUT[jj, ii] = 0.0 + 0.0j
+        else:
+            d_plan_OUT[jj, ii] = d_plan_IN[jj, ii]
 
 
 #		spec_mask_filter_device[xy] = log(1 + (R - R_low));
@@ -265,35 +269,65 @@ lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance):
 
 
 def volume_propag_angular_spectrum_complex(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_VOLUME_PROPAG,
-lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distancePropagIni, pasPropag, nbPropag, f_pix_min, f_pix_max):
+lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distancePropagIni, pasPropag, nbPropag, f_pix_min, f_pix_max,
+remove_carrier=False):
+
+    # remove_carrier : retire la phase globale exp(2iπ d/λ) que le noyau applique à tout le plan
+    # (terme de fréquence nulle). Les plans sont alors référencés en phase entre eux : la partie
+    # réelle et la partie imaginaire gardent le même sens d'un plan à l'autre.
 
     nthread = 1024
-    nBlock = math.ceil(nb_pix_X * nb_pix_Y // nthread)
+    # (a + b - 1) // b : arrondi supérieur exact (ceil(a // b) tronquait avant d'arrondir)
+    nBlock = (nb_pix_X * nb_pix_Y + nthread - 1) // nthread
 
     d_FFT_HOLO = fftshift(fft2(d_HOLO, norm = 'ortho'))
 
-    if ((f_pix_min != 0) and (f_pix_max != 0)):
+    # Filtre dès qu'une borne est non nulle (comme HOLOTRACKER)
+    if ((f_pix_min != 0) or (f_pix_max != 0)):
         d_spec_filter_FFT[nBlock, nthread](d_FFT_HOLO, d_FFT_HOLO, nb_pix_X, nb_pix_Y, f_pix_min, f_pix_max)
 
     for i in range(nbPropag):
         distance = distancePropagIni + i * pasPropag
         d_calc_kernel_angular_spectrum_jit[nBlock, nthread](d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
         d_FFT_HOLO_PROPAG = d_FFT_HOLO * d_KERNEL
-        d_HOLO_VOLUME_PROPAG[i,:,:] = ifft2(ifftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
+        plane = ifft2(ifftshift(d_FFT_HOLO_PROPAG), norm = 'ortho')
+        if remove_carrier:
+            plane = plane * np.complex64(cmath.exp(-2j * math.pi * distance / lambda_milieu))
+        d_HOLO_VOLUME_PROPAG[i,:,:] = plane
 
+
+def volume_propag_angular_spectrum_to_focus_complex(d_HOLO, d_FOCUS_VOLUME, focus_plane_fn, sumSize,
+lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distancePropagIni, pasPropag, nbPropag, f_pix_min, f_pix_max):
+
+    ### Volume de focus calculé plan par plan sur le champ COMPLEXE (porteuse retirée), sans stocker
+    ### le volume complexe (400 × 1024² en complex64 = 3,4 Go). focus_plane_fn(plan_complexe, sumSize)
+    ### renvoie le plan de focus (float32), par ex. focus.focus_plane_var_imag_over_real.
+
+    nthread = 1024
+    nBlock = (nb_pix_X * nb_pix_Y + nthread - 1) // nthread
+    d_KERNEL = cp.zeros((nb_pix_Y, nb_pix_X), dtype=cp.complex64)
+    d_FFT_HOLO = fftshift(fft2(d_HOLO, norm = 'ortho'))
+    if ((f_pix_min != 0) or (f_pix_max != 0)):
+        d_spec_filter_FFT[nBlock, nthread](d_FFT_HOLO, d_FFT_HOLO, nb_pix_X, nb_pix_Y, f_pix_min, f_pix_max)
+    for i in range(nbPropag):
+        distance = distancePropagIni + i * pasPropag
+        d_calc_kernel_angular_spectrum_jit[nBlock, nthread](d_KERNEL, lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distance)
+        plane = ifft2(ifftshift(d_FFT_HOLO * d_KERNEL), norm = 'ortho')
+        plane = plane * np.complex64(cmath.exp(-2j * math.pi * distance / lambda_milieu))
+        d_FOCUS_VOLUME[i,:,:] = focus_plane_fn(plane, sumSize)
 
 
 def volume_propag_angular_spectrum_to_module(d_HOLO, d_FFT_HOLO, d_KERNEL, d_FFT_HOLO_PROPAG, d_HOLO_VOLUME_PROPAG_MODULE,
 lambda_milieu, magnification, pixSize, nb_pix_X, nb_pix_Y, distancePropagIni, pasPropag, nbPropag, f_pix_min, f_pix_max):
 
     nthread = 1024
-    nBlock = math.ceil(nb_pix_X * nb_pix_Y // nthread)
+    # (a + b - 1) // b : arrondi supérieur exact (ceil(a // b) tronquait avant d'arrondir)
+    nBlock = (nb_pix_X * nb_pix_Y + nthread - 1) // nthread
 
     d_FFT_HOLO = fftshift(fft2(d_HOLO, norm = 'ortho'))
 
-    d_HOLO_PROPAG = cp.zeros(shape = (nb_pix_Y, nb_pix_X), dtype = cp.complex64)
-
-    if ((f_pix_min != 0) and (f_pix_max != 0)):
+    # Filtre dès qu'une borne est non nulle (comme HOLOTRACKER)
+    if ((f_pix_min != 0) or (f_pix_max != 0)):
         d_spec_filter_FFT[nBlock, nthread](d_FFT_HOLO, d_FFT_HOLO, nb_pix_X, nb_pix_Y, f_pix_min, f_pix_max)
 
     for i in range(nbPropag):

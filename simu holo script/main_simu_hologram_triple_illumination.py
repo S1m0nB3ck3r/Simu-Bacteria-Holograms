@@ -24,6 +24,7 @@ from libs.simu_hologram import (
     cross_through_plane,
     create_illumination_field,
     save_volume_as_tiff,
+    add_sensor_noise,
 )
 import numpy as np
 import cupy as cp
@@ -72,8 +73,8 @@ WAVELENGTH = 660e-9       # Longueur d'onde laser (m) = 660 nm
 
 # --- Illumination et bruit ---
 ILLUMINATION_MEAN = 1.0  # Amplitude moyenne du champ d'illumination
-NOISE_STD_MIN = 0.01      # Écart-type min du bruit
-NOISE_STD_MAX = 0.02       # Écart-type max du bruit
+SENSOR_NOISE_STD_MIN = 0.015  # Bruit capteur : écart-type min, relatif au fond, ajouté à l'intensité après propagation
+SENSOR_NOISE_STD_MAX = 0.015  # Bruit capteur : écart-type max (mesuré sur film réel : 0,015)
 
 # --- Sources d'illumination (3 ondes planes avec angles différents) ---
 NUMBER_OF_SOURCES = 3
@@ -99,8 +100,8 @@ BACTERIA_LIST = [
         "pos_x": 7.0e-5,       # Position X (m) = 70 µm
         "pos_y": 7.0e-5,       # Position Y (m) = 70 µm
         "pos_z": 5.0e-5,       # Position Z (m) = 50 µm
-        "length": 3.0e-6,      # Longueur (m)   = 3 µm
-        "thickness": 1.0e-6,   # Épaisseur (m)  = 1 µm
+        "length": 1.75e-6,      # Longueur (m)   = 1,75 µm
+        "thickness": 0.8e-6,   # Épaisseur (m)  = 0,8 µm
         "theta": 0.0,          # Angle theta
         "phi": 90.0,            # Angle phi
     }
@@ -281,8 +282,8 @@ def save_parameters(dirs):
         "vox_size_z_total": Z_SIZE * Z_STEP,
         "wavelength": WAVELENGTH,
         "illumination_mean": ILLUMINATION_MEAN,
-        "ecart_type_min": NOISE_STD_MIN,
-        "ecart_type_max": NOISE_STD_MAX,
+        "sensor_noise_std_min": SENSOR_NOISE_STD_MIN,
+        "sensor_noise_std_max": SENSOR_NOISE_STD_MAX,
         "save_hologram_bmp": SAVE_HOLOGRAM_BMP,
         "save_hologram_tiff": SAVE_HOLOGRAM_TIFF,
         "save_hologram_npy": SAVE_HOLOGRAM_NPY,
@@ -395,6 +396,7 @@ if __name__ == "__main__":
                 bact,
                 vox_size_xy / UPSCALE_FACTOR,   # voxel XY plus fin
                 vox_size_z,
+                UPSCALE_FACTOR,                 # aligne la grille fine sur la grille finale
             )
 
         # ==============================================================
@@ -420,10 +422,11 @@ if __name__ == "__main__":
         bool_volume_mask = cp.asnumpy(cp_mask_volume > 0.0)
 
         # ----------------------------------------------------------
-        # Créer le champ d'illumination (onde plane + bruit)
+        # Créer le champ d'illumination (ondes planes, sans bruit : le bruit capteur est ajouté
+        # à l'intensité après propagation)
         # ----------------------------------------------------------
-        ecart_type_bruit = (
-            (NOISE_STD_MAX - NOISE_STD_MIN) * rnd.random() + NOISE_STD_MIN
+        sensor_std = (
+            (SENSOR_NOISE_STD_MAX - SENSOR_NOISE_STD_MIN) * rnd.random() + SENSOR_NOISE_STD_MIN
         )
         cp_field_plane = create_illumination_field_polar(
             field_size_xy_pix=holo_size_xy_w_b,
@@ -435,7 +438,7 @@ if __name__ == "__main__":
             sources_azimuth_degree=SOURCES_AZIMUTH,
             sources_polar_degree=SOURCES_POLAR,
             noise_mean=ILLUMINATION_MEAN,
-            noise_std=ecart_type_bruit,
+            noise_std=0.0,
             )
 
         # ----------------------------------------------------------
@@ -490,7 +493,9 @@ if __name__ == "__main__":
             BORDER : BORDER + HOLO_SIZE_XY,
             BORDER : BORDER + HOLO_SIZE_XY,
         ]
-        intensity_image = cp.asnumpy(traitement_holo.intensite(cropped_field))
+        # fond = intensité moyenne (les sources interfèrent : ce n'est pas ILLUMINATION_MEAN²)
+        cp_intensity = traitement_holo.intensite(cropped_field)
+        intensity_image = cp.asnumpy(add_sensor_noise(cp_intensity, sensor_std, float(cp_intensity.mean())))
 
         # ----------------------------------------------------------
         # Sauvegarde de tous les résultats

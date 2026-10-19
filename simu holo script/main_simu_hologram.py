@@ -59,10 +59,10 @@ def validate_config(config):
         'upscale_factor': 2,
         'z_size': 200,
         'z_step': 0.5e-6,
-        'length_min': 3.0e-6,
-        'length_max': 4.0e-6,
-        'thickness_min': 1.0e-6,
-        'thickness_max': 2.0e-6,
+        'length_min': 1.5e-6,
+        'length_max': 2.0e-6,
+        'thickness_min': 0.8e-6,
+        'thickness_max': 0.8e-6,
         'radius_min': 0.5e-6,
         'radius_max': 2.0e-6,
         'pix_size': 5.5e-6,
@@ -71,12 +71,13 @@ def validate_config(config):
         'index_object': 1.335,
         'wavelength': 660e-9,
         'illumination_mean': 1.0,
-        'noise_std_min': 0.01,
-        'noise_std_max': 0.1,
+        'sensor_noise_std_min': 0.015,   # bruit capteur, relatif au fond (mesuré sur film réel)
+        'sensor_noise_std_max': 0.015,
         'number_of_sources': 1,
         'sources_angle_azimuth': [0.0],
         'sources_angle_polar': [0.0],
-        'distance_volume_camera': 0.01,
+        'distance_volume_camera': 0.0,   # m, object space
+        'holo_ref_nb_planes': 1,
         'volume_smoothing': {
             'enabled': False,
             'method': 'gaussian',
@@ -91,7 +92,8 @@ def validate_config(config):
             'propagated_npy': False,
             'segmentation_tiff': True,
             'segmentation_npy': False,
-            'positions_csv': True
+            'positions_csv': True,
+            'holo_ref': False
         }
     }
     
@@ -117,6 +119,18 @@ def validate_config(config):
         print("  [config] convention 'sources_angle_degree_X/Y' convertie en "
               "'sources_angle_azimuth' / 'sources_angle_polar'")
 
+    # Bruit d'illumination supprimé (bruit blanc spatial sur l'amplitude : pas de phénomène physique
+    # correspondant ; le fond fixe réel est retiré par division par la moyenne du film). Remplacé par
+    # le bruit capteur sensor_noise_std_min/max, ajouté à l'intensité après propagation.
+    for old in ('noise_std_min', 'noise_std_max'):
+        if old in config:
+            config.pop(old)
+            print(f"  [config] '{old}' ignoré : bruit d'illumination supprimé, "
+                  "utiliser 'sensor_noise_std_min' / 'sensor_noise_std_max'")
+    if not 0 <= config['sensor_noise_std_min'] <= config['sensor_noise_std_max']:
+        raise ValueError("sensor_noise_std_min / max : attendu 0 <= min <= max, "
+                         f"got {config['sensor_noise_std_min']} / {config['sensor_noise_std_max']}")
+
     # Validate illumination source angles
     if len(config['sources_angle_azimuth']) != config['number_of_sources']:
         raise ValueError(f"sources_angle_azimuth must have {config['number_of_sources']} elements, "
@@ -128,7 +142,7 @@ def validate_config(config):
     return config
 
 
-def setup_directories(base_path):
+def setup_directories(base_path, save_holo_ref=False):
     """Create output directories and return paths"""
     now = datetime.datetime.now()
     formatted_date_time = now.strftime("%Y_%m_%d_%H_%M_%S")
@@ -139,18 +153,22 @@ def setup_directories(base_path):
     simulated_hologram_dir = os.path.join(output_dir, "simulated_hologram")
     binary_volume_dir = os.path.join(output_dir, "binary_volume")
     hologram_volume_dir = os.path.join(output_dir, "hologram_volume")
+    holo_ref_dir = os.path.join(output_dir, "holo_ref")
     
     os.makedirs(object_positions_dir, exist_ok=True)
     os.makedirs(simulated_hologram_dir, exist_ok=True)
     os.makedirs(binary_volume_dir, exist_ok=True)
     os.makedirs(hologram_volume_dir, exist_ok=True)
+    if save_holo_ref:
+        os.makedirs(holo_ref_dir, exist_ok=True)
     
     return {
         'base': output_dir,
         'object_positions': object_positions_dir,
         'simulated_hologram': simulated_hologram_dir,
         'binary_volume': binary_volume_dir,
-        'hologram_volume': hologram_volume_dir
+        'hologram_volume': hologram_volume_dir,
+        'holo_ref': holo_ref_dir
     }
 
 
@@ -290,6 +308,47 @@ def save_hologram_results(dirs, n, intensity_image,
     print(f"    ✓ Saved positions TXT: {positions_file}")
 
 
+def save_reference_hologram(dirs, holo_id, make_field, nb_planes, distance, intensity_image,
+                            buffers, lambda_milieu, magnification, pix_size,
+                            holo_size_xy, border, save_options, sensor_std, background_intensity):
+    """
+    Reference hologram, as the mean of nb_planes frames of a real film without object: the
+    same illumination (make_field, noise-free) propagated over the same total distance as the
+    simulated hologram, plus sensor noise sensor_std/sqrt(nb_planes) (the mean of N independent
+    Gaussian draws is one draw of std sigma/sqrt(N)). Saved in holo_ref/ with the hologram's formats.
+
+    Without phase masks, the z_size steps of dz compose into a single propagation.
+    The BMP is normalized with the hologram's min/max (not its own) so that both BMPs
+    share the same intensity scale.
+    """
+    import tifffile
+
+    holo_size_xy_w_b = holo_size_xy + 2 * border
+    d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag = buffers
+    cp_field_ref = propagation.propag_angular_spectrum(
+        make_field(), d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag,
+        lambda_milieu, magnification, pix_size, holo_size_xy_w_b, holo_size_xy_w_b,
+        distance, 0, 0
+    )
+    ref_image = cp.asnumpy(add_sensor_noise(
+        traitement_holo.intensite(cp_field_ref[border:border+holo_size_xy, border:border+holo_size_xy]),
+        sensor_std / math.sqrt(nb_planes), background_intensity))
+
+    ref_base = os.path.join(dirs['holo_ref'], f"holo_ref_{holo_id}")
+    if save_options.get('hologram_bmp', False):
+        i_min, i_max = intensity_image.min(), intensity_image.max()
+        ref_normalized = (np.clip((ref_image - i_min) / (i_max - i_min + 1e-10), 0.0, 1.0)
+                          * 255).astype(np.uint8)
+        Image.fromarray(ref_normalized).save(ref_base + ".bmp")
+        print(f"    [OK] Saved reference hologram BMP: {ref_base}.bmp")
+    if save_options.get('hologram_tiff', False):
+        tifffile.imwrite(ref_base + ".tiff", ref_image.astype(np.float32))
+        print(f"    [OK] Saved reference hologram TIFF: {ref_base}.tiff")
+    if save_options.get('hologram_npy', False):
+        np.save(ref_base + ".npy", ref_image.astype(np.float32))
+        print(f"    [OK] Saved reference hologram NPY: {ref_base}.npy")
+
+
 def simulate_bacteria(config, dirs):
     """Simulate bacteria holograms, from a random draw or from a predefined list.
 
@@ -397,12 +456,16 @@ def simulate_bacteria(config, dirs):
         for i, bact in enumerate(liste_bacteries):
             if (i + 1) % max(1, len(liste_bacteries) // 10) == 0:
                 print(f"    - {i+1}/{len(liste_bacteries)}")
+            # upscale_factor : aligne la grille fine sur la grille finale (voir upscale_grid_shift),
+            # sans quoi le moyennage de blocs ci-dessous décale l'objet de (up-1)/(2*up) voxel
             GPU_insert_bact_in_mask_volume(cp_mask_volume_upscaled, bact,
-                                          vox_size_xy / upscale_factor, vox_size_z)
+                                          vox_size_xy / upscale_factor, vox_size_z, upscale_factor)
 
 
         # Flip Z axis
         cp_mask_volume_upscaled = cp.flip(cp_mask_volume_upscaled, axis=2)
+        # retour à la grille finale : le bloc moyenné est décentré d'un demi-bloc par rapport au
+        # point d'échantillonnage i*vox, ce que compense le décalage appliqué à l'insertion
         cp_mask_volume = cp_mask_volume_upscaled[:,:,:].reshape(
             holo_size_xy, upscale_factor, holo_size_xy, upscale_factor, z_size
         ).mean(axis=(1, 3))
@@ -429,21 +492,28 @@ def simulate_bacteria(config, dirs):
             
             print(f"  - Source {src_idx+1}/{config['number_of_sources']}: azimuth={angle_azimuth}° polar={angle_polar}°")
             
-            # Create illumination field
-            ecart_type_bruit = ((config['noise_std_max'] - config['noise_std_min']) * rnd.random() +
-                               config['noise_std_min'])
-            cp_field_plane = create_illumination_field_polar(
-                field_size_xy_pix=holo_size_xy_w_b,
-                wavelength=wavelength,
-                pixel_size=pix_size,
-                magnification=grossissement,
-                medium_index=index_milieu,
-                number_of_sources=1,
-                sources_azimuth_degree=[angle_azimuth],
-                sources_polar_degree=[angle_polar],
-                noise_mean=config['illumination_mean'],
-                noise_std=ecart_type_bruit
-            )
+            # Illumination without noise (plane wave); sensor noise is added to the intensity
+            # after propagation, with a std drawn once for this hologram
+            sensor_std = ((config['sensor_noise_std_max'] - config['sensor_noise_std_min']) * rnd.random() +
+                          config['sensor_noise_std_min'])
+            background_intensity = config['illumination_mean'] ** 2
+            def make_illumination_field():
+                field = create_illumination_field_polar(
+                    field_size_xy_pix=holo_size_xy_w_b,
+                    wavelength=wavelength,
+                    pixel_size=pix_size,
+                    magnification=grossissement,
+                    medium_index=index_milieu,
+                    number_of_sources=1,
+                    sources_azimuth_degree=[angle_azimuth],
+                    sources_polar_degree=[angle_polar],
+                    noise_mean=config['illumination_mean'],
+                    noise_std=0.0
+                )
+                # Apodisation of the border: removes the periodic-wrap phase jump of tilted waves
+                return apodize_border(field, border)
+            cp_field_plane = make_illumination_field()
+            save_holo_ref = config.get('save_options', {}).get('holo_ref', False)
             
             # Propagation
             print("  - Propagating hologram...")
@@ -467,11 +537,32 @@ def simulate_bacteria(config, dirs):
                     shift_in_obj=shift_in_obj
                 )
             
+            # Final propagation from the volume exit to the hologram plane
+            distance_volume_camera = config['distance_volume_camera']
+            if distance_volume_camera > 0:
+                print(f"  - Propagating volume -> camera ({distance_volume_camera*1e6:.1f} µm)...")
+                cp_field_plane = propagation.propag_angular_spectrum(
+                    cp_field_plane, d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag,
+                    lambda_milieu, grossissement, pix_size, holo_size_xy_w_b, holo_size_xy_w_b,
+                    distance_volume_camera, 0, 0
+                )
+            
             # Crop and save
             cropped_field_plane = cp_field_plane[border:border+holo_size_xy, 
                                                  border:border+holo_size_xy]
             
-            intensity_image = cp.asnumpy(traitement_holo.intensite(cropped_field_plane))
+            intensity_image = cp.asnumpy(add_sensor_noise(
+                traitement_holo.intensite(cropped_field_plane), sensor_std, background_intensity))
+            
+            if save_holo_ref:
+                print(f"  - Reference hologram (no object, {config['holo_ref_nb_planes']} plane(s))...")
+                save_reference_hologram(
+                    dirs, holo_id, make_illumination_field, max(1, int(config['holo_ref_nb_planes'])),
+                    z_size * vox_size_z + max(0.0, distance_volume_camera), intensity_image,
+                    (d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag),
+                    lambda_milieu, grossissement, pix_size, holo_size_xy, border,
+                    config.get('save_options', {}), sensor_std, background_intensity
+                )
             
             print("  - Saving results...")
             save_hologram_results(
@@ -588,12 +679,15 @@ def simulate_sphere(config, dirs):
         # Insert spheres in volume
         print("  - Inserting spheres in volume...")
         for i, sphere in enumerate(liste_spheres):
+            # upscale_factor : aligne la grille fine sur la grille finale (voir upscale_grid_shift)
             insert_sphere_in_mask_volume(cp_mask_volume_upscaled, sphere,
                                         vox_size_xy / upscale_factor, vox_size_z, upscale_factor)
 
 
         # Flip Z axis
         cp_mask_volume_upscaled = cp.flip(cp_mask_volume_upscaled, axis=2)
+        # retour à la grille finale : le bloc moyenné est décentré d'un demi-bloc par rapport au
+        # point d'échantillonnage i*vox, ce que compense le décalage appliqué à l'insertion
         cp_mask_volume = cp_mask_volume_upscaled[:,:,:].reshape(
             holo_size_xy, upscale_factor, holo_size_xy, upscale_factor, z_size
         ).mean(axis=(1, 3))
@@ -620,21 +714,28 @@ def simulate_sphere(config, dirs):
             
             print(f"  - Source {src_idx+1}/{config['number_of_sources']}: azimuth={angle_azimuth}° polar={angle_polar}°")
             
-            # Create illumination field
-            ecart_type_bruit = ((config['noise_std_max'] - config['noise_std_min']) * rnd.random() +
-                               config['noise_std_min'])
-            cp_field_plane = create_illumination_field_polar(
-                field_size_xy_pix=holo_size_xy_w_b,
-                wavelength=wavelength,
-                pixel_size=pix_size,
-                magnification=grossissement,
-                medium_index=index_milieu,
-                number_of_sources=1,
-                sources_azimuth_degree=[angle_azimuth],
-                sources_polar_degree=[angle_polar],
-                noise_mean=config['illumination_mean'],
-                noise_std=ecart_type_bruit
-            )
+            # Illumination without noise (plane wave); sensor noise is added to the intensity
+            # after propagation, with a std drawn once for this hologram
+            sensor_std = ((config['sensor_noise_std_max'] - config['sensor_noise_std_min']) * rnd.random() +
+                          config['sensor_noise_std_min'])
+            background_intensity = config['illumination_mean'] ** 2
+            def make_illumination_field():
+                field = create_illumination_field_polar(
+                    field_size_xy_pix=holo_size_xy_w_b,
+                    wavelength=wavelength,
+                    pixel_size=pix_size,
+                    magnification=grossissement,
+                    medium_index=index_milieu,
+                    number_of_sources=1,
+                    sources_azimuth_degree=[angle_azimuth],
+                    sources_polar_degree=[angle_polar],
+                    noise_mean=config['illumination_mean'],
+                    noise_std=0.0
+                )
+                # Apodisation of the border: removes the periodic-wrap phase jump of tilted waves
+                return apodize_border(field, border)
+            cp_field_plane = make_illumination_field()
+            save_holo_ref = config.get('save_options', {}).get('holo_ref', False)
             
             # Propagation
             print("  - Propagating hologram...")
@@ -656,11 +757,32 @@ def simulate_sphere(config, dirs):
                     transmission_in_obj=transmission_obj
                 )
             
+            # Final propagation from the volume exit to the hologram plane
+            distance_volume_camera = config['distance_volume_camera']
+            if distance_volume_camera > 0:
+                print(f"  - Propagating volume -> camera ({distance_volume_camera*1e6:.1f} µm)...")
+                cp_field_plane = propagation.propag_angular_spectrum(
+                    cp_field_plane, d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag,
+                    lambda_milieu, grossissement, pix_size, holo_size_xy_w_b, holo_size_xy_w_b,
+                    distance_volume_camera, 0, 0
+                )
+            
             # Crop and save
             cropped_field_plane = cp_field_plane[border:border+holo_size_xy, 
                                                  border:border+holo_size_xy]
             
-            intensity_image = cp.asnumpy(traitement_holo.intensite(cropped_field_plane))
+            intensity_image = cp.asnumpy(add_sensor_noise(
+                traitement_holo.intensite(cropped_field_plane), sensor_std, background_intensity))
+            
+            if save_holo_ref:
+                print(f"  - Reference hologram (no object, {config['holo_ref_nb_planes']} plane(s))...")
+                save_reference_hologram(
+                    dirs, holo_id, make_illumination_field, max(1, int(config['holo_ref_nb_planes'])),
+                    z_size * vox_size_z + max(0.0, distance_volume_camera), intensity_image,
+                    (d_fft_holo, d_KERNEL, d_fft_holo_propag, d_holo_propag),
+                    lambda_milieu, grossissement, pix_size, holo_size_xy, border,
+                    config.get('save_options', {}), sensor_std, background_intensity
+                )
             
             print("  - Saving results...")
             save_hologram_results(
@@ -718,7 +840,12 @@ Examples:
     if not os.path.exists(base_path):
         os.makedirs(base_path)
     
-    dirs = setup_directories(base_path)
+    dirs = setup_directories(base_path, config['save_options'].get('holo_ref', False))
+
+    # Configuration effective (valeurs par défaut comprises), pour relire les paramètres
+    # de la simulation depuis son dossier de sortie (stats/GUI_holo_stats.py)
+    with open(os.path.join(dirs['base'], "config_simu.json"), 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
     
     # Print configuration summary
     print("\n" + "="*80)
@@ -732,6 +859,7 @@ Examples:
     print(f"Wavelength: {config['wavelength']*1e9:.1f} nm")
     print(f"Medium index: {config['index_medium']}")
     print(f"Object index: {config['index_object']}")
+    print(f"Volume-camera distance: {config['distance_volume_camera']*1e6:.1f} µm")
     print(f"Illumination sources: {config['number_of_sources']}")
     for _i in range(config['number_of_sources']):
         print(f"  Source {_i+1}: azimuth={config['sources_angle_azimuth'][_i]:.2f}°  polar={config['sources_angle_polar'][_i]:.2f}°")

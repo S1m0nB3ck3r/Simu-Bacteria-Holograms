@@ -1,0 +1,40 @@
+{
+  "name": "stage1_sim",
+  "loss": "centernet",
+  "input": "reim",
+  "norm": "fixed",
+  "z_step": 1.0,
+  "depth_um": 208.0,
+  "orient_weight": 0.0,
+  "curriculum": "none",
+  "train_dir": "deep_learning_segmentation/data/seg_sim/train",
+  "val_dir": "deep_learning_segmentation/data/seg_sim/val",
+  "iters": 6000,
+  "lr": 0.001,
+  "warmup": 200,
+  "base": 16,
+  "depth": 3,
+  "patch": [
+    48,
+    96,
+    96
+  ],
+  "norm_layer": "batch",
+  "holos_per_step": 2,
+  "patches_per_holo": 2,
+  "pos_fraction": 0.7,
+  "eval_every": 500,
+  "val_limit": 24,
+  "seed": 0,
+  "out": "deep_learning_segmentation/runs_v2",
+  "length_um": 1.8,
+  "thickness_um": 0.6,
+  "grid": {
+    "z0_um": 0.0,
+    "step_z_um": 1.0,
+    "nb_planes": 208,
+    "decim": 2
+  },
+  "target": "heat",
+  "n_params": 1423233
+}

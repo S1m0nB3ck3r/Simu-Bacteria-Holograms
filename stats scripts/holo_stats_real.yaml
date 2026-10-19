@@ -1,0 +1,88 @@
+# =============================================================================
+# holo_stats — configuration pour un HOLOGRAMME RÉEL
+# Lancer : python stats/holo_stats.py stats/holo_stats_real.yaml
+#
+# Tous les paramètres sont obligatoires. Chemins relatifs : par rapport au dossier
+# de ce fichier. Nombres : notation scientifique acceptée (660e-9 ou 6.6e-7).
+# Valeurs ci-dessous : celles de HOLOTRACKER (last_param.json).
+# =============================================================================
+
+inputs:
+  # Hologramme à analyser.
+  #   Formats : .bmp, .png, .tif, .tiff, .npy (image 2D). Recadré au centre sur holo_size_x × holo_size_y.
+  hologram: "../REAL HOLO FILM/manipe3.859alpr9.000000.bmp"
+
+  # Hologramme de référence (hologramme moyen) :
+  #   - un fichier image (mêmes formats que hologram), à la même échelle que l'hologramme ;
+  #   - ou un dossier : moyenne arithmétique de toutes les images ayant l'extension de hologram.
+  #   Attention : REAL HOLO FILM/mean/mean_arith.bmp est ré-étiré sur 0-255 (et contient un 0) :
+  #   inutilisable en division. Préférer le dossier du film.
+  reference: "../REAL HOLO FILM"
+
+  # Dossier de sortie.
+  #   - null : <dossier de l'hologramme>/<nom de l'hologramme>_stats_<date>/
+  #   - un chemin : utilisé tel quel (créé si besoin, fichiers écrasés)
+  output_dir: null
+
+cleaning:
+  # Nettoyage de l'hologramme par la référence (identique à HOLOTRACKER) :
+  #   - division    : holo / ref, puis puissance division_power
+  #   - subtraction : holo - ref, puis retrait du minimum (valeurs positives)
+  #   - none        : hologramme brut (la référence est lue pour ses statistiques seulement)
+  type: division
+
+  # Puissance appliquée après division (ignorée sinon).
+  #   Réel > 0. HOLOTRACKER : 0.8. 1.0 = division pure.
+  division_power: 0.8
+
+optics:
+  # Longueur d'onde dans le vide (m). Réel > 0.
+  wavelength: 660e-9
+  # Indice du milieu. Réel >= 1 (eau : 1.33).
+  medium_index: 1.33
+  # Taille du pixel caméra (m). Réel > 0.
+  pixel_size: 7e-6
+  # Grossissement de l'objectif. Réel > 0.
+  #   Pixel côté objet = pixel_size / magnification.
+  magnification: 40
+  # Taille de la zone analysée (pixels). Entier > 0, <= taille de l'image.
+  holo_size_x: 1024
+  holo_size_y: 1024
+
+propagation:
+  # Distance du premier plan reconstruit à l'hologramme (m). Réel (0 = plan du capteur).
+  distance_ini: 0
+  # Nombre de plans reconstruits. Entier > 0.
+  #   Mémoire GPU : nb_planes × holo_size_x × holo_size_y × 4 octets (200 plans ≈ 800 Mo).
+  nb_planes: 200
+  # Pas entre plans (m). Réel > 0.
+  step: 0.5e-6
+  # Filtre spectral passe-bande, en pixels de fréquence depuis le centre du spectre.
+  #   high_pass : rayon minimal conservé ; low_pass : rayon maximal conservé.
+  #   Entiers >= 0 avec high_pass < low_pass. 0 et 0 = pas de filtrage.
+  high_pass: 15
+  low_pass: 125
+
+detection:
+  # Critère de netteté appliqué au volume :
+  #   TENEGRAD | SUM_OF_VARIANCE | SUM_OF_LAPLACIAN | SUM_OF_INTENSITY |
+  #   SUM_OF_GRADIENT | MEAN_ALL | MEAN_LOG_ALL | VAR_IMAG_OVER_REAL
+  #   VAR_IMAG_OVER_REAL : var. locale(Im) / var. locale(Re) du champ complexe reconstruit
+  #   (porteuse retirée), pour objets de phase ; fond ≈ 1, sans unité.
+  focus_type: TENEGRAD
+  # Taille du noyau de sommation du focus (pixels). Entier > 0.
+  sum_size: 11
+  # Seuil = moyenne + nb_std_threshold × écart-type du volume de focus. Réel.
+  nb_std_threshold: 14
+  # Connectivité 3D des composantes connexes : 6 | 18 | 26
+  connectivity: 26
+  # Filtre sur la taille des objets (voxels). Entier >= 0. 0 = pas de borne.
+  min_voxel: 0
+  max_voxel: 0
+
+analysis:
+  # Écart-type (pixels) du lissage gaussien qui estime l'enveloppe d'éclairage. Réel > 0.
+  envelope_sigma: 50
+  # Sous-échantillonnage XY pour les statistiques CPU du volume (médiane, percentiles).
+  #   Entier >= 1. 1 = tout le volume (lent, ~800 Mo en RAM) ; 4 = 1 voxel sur 16.
+  subsample_xy: 4

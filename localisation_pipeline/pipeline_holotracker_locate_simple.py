@@ -57,14 +57,14 @@ HOLO_SIZE_XY = 1024  # Taille image (pixels)
 Z_SIZE = 200  # Nombre de plans Z
 PIX_SIZE = 5.5e-6  # Taille pixel (m)
 STEP_Z = 0.5e-6  # Pas en Z (m)
-VOLUME_CAMERA_DISTANCE = 1e-5 # Distance volume-caméra (m)
+VOLUME_CAMERA_DISTANCE = 1e-5 # Distance volume-caméra (m) = distance du premier plan reconstruit
 
 # Paramètres de détection
 SUM_SIZE = 15  # Taille du noyau de focus
 NB_STDVAR_THRESHOLD = 10  # Seuil en nombre d'écart-types
 N_CONNECTIVITY = 26  # Connectivité 3D
-FILTER_LOW = 15  # Filtre passe-bas
-FILTER_HIGH = 125  # Filtre passe-haut
+FILTER_LOW = 15  # Rayon min conservé dans le spectre (px) : coupe les basses fréquences
+FILTER_HIGH = 125  # Rayon max conservé dans le spectre (px) : coupe les hautes fréquences
 Focus_type = Focus_type.TENEGRAD
 
 # Options d'affichage
@@ -139,20 +139,16 @@ def main():
     
     t1 = time.perf_counter()
 
-    # Propagation initiale jusqu'au plan du volume
-    propag.propag_angular_spectrum(
-        d_holo, d_fft_holo, d_KERNEL,
-        d_fft_holo_propag, d_holo_propag,
-        medium_wavelength, MAGNIFICATION, PIX_SIZE, HOLO_SIZE_XY, HOLO_SIZE_XY, 
-        VOLUME_CAMERA_DISTANCE, FILTER_LOW, FILTER_HIGH
-    )
-
-    # Reconstruction du volume par propagation plan par plan
+    # Reconstruction du volume plan par plan, directement depuis l'hologramme : le plan i est
+    # à la distance VOLUME_CAMERA_DISTANCE + i * STEP_Z (comme distance_ini dans HOLOTRACKER).
+    # Une première propagation jusqu'au volume figurait ici, mais son résultat n'était pas
+    # utilisé : le volume était reconstruit à partir de l'hologramme non propagé, donc
+    # décalé de VOLUME_CAMERA_DISTANCE.
     propag.volume_propag_angular_spectrum_to_module(
         d_holo, d_fft_holo, d_KERNEL,
         d_fft_holo_propag, d_volume_module,
-        medium_wavelength, MAGNIFICATION, PIX_SIZE, HOLO_SIZE_XY, HOLO_SIZE_XY, 
-        0.0, STEP_Z, Z_SIZE, FILTER_LOW, FILTER_HIGH
+        medium_wavelength, MAGNIFICATION, PIX_SIZE, HOLO_SIZE_XY, HOLO_SIZE_XY,
+        VOLUME_CAMERA_DISTANCE, STEP_Z, Z_SIZE, FILTER_LOW, FILTER_HIGH
         )
     t2 = time.perf_counter()
     
@@ -194,7 +190,9 @@ def main():
     print("📊 ÉTAPE 4 : Analyse des objets...")
     
     features = np.ndarray(shape=(number_of_labels,), dtype=dobjet)
-    features = CCA_CUDA_float(d_labels, d_volume_module, number_of_labels, 1, HOLO_SIZE_XY, HOLO_SIZE_XY, Z_SIZE, dx, dy, dz)
+    # z_offset (en µm, comme dz) : Z absolu = distance à l'hologramme
+    features = CCA_CUDA_float(d_labels, d_volume_module, number_of_labels, 1, HOLO_SIZE_XY, HOLO_SIZE_XY, Z_SIZE, dx, dy, dz,
+                              z_offset=VOLUME_CAMERA_DISTANCE * 1e6)
     t5 = time.perf_counter()
     
     # ÉTAPE 5 : Sauvegarde des résultats

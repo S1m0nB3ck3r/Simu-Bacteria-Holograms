@@ -18,10 +18,10 @@ def create_config(
     border=256,
     z_size=200,
     z_step=0.5e-6,
-    length_min=3.0e-6,
-    length_max=4.0e-6,
-    thickness_min=1.0e-6,
-    thickness_max=2.0e-6,
+    length_min=1.5e-6,
+    length_max=2.0e-6,
+    thickness_min=0.8e-6,
+    thickness_max=0.8e-6,
     radius_min=0.5e-6,
     radius_max=2.0e-6,
     pix_size=5.5e-6,
@@ -68,7 +68,7 @@ def create_config(
     output_dir : str or None
         Output directory (None = auto)
     **kwargs : dict
-        Additional parameters (noise_std_min, noise_std_max, etc.)
+        Additional parameters (sensor_noise_std_min, sensor_noise_std_max, etc.)
     """
     
     config = {
@@ -111,8 +111,8 @@ def create_config(
     # Add illumination parameters
     config.update({
         "illumination_mean": kwargs.get('illumination_mean', 1.0),
-        "noise_std_min": kwargs.get('noise_std_min', 0.01),
-        "noise_std_max": kwargs.get('noise_std_max', 0.1),
+        "sensor_noise_std_min": kwargs.get('sensor_noise_std_min', 0.015),
+        "sensor_noise_std_max": kwargs.get('sensor_noise_std_max', 0.015),
     })
     
     return config

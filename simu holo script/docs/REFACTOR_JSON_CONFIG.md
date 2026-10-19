@@ -9,8 +9,8 @@ python main_simu_hologram.py \
   --nb_holo 100 \
   --nb_objects 50 \
   --holo_size_xy 1024 \
-  --length_min 3.0e-6 \
-  --length_max 4.0e-6 \
+  --length_min 1.5e-6 \
+  --length_max 2.0e-6 \
   ... (20+ more arguments)
 ```
 

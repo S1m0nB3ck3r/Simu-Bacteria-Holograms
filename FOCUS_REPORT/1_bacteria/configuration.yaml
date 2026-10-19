@@ -1,0 +1,65 @@
+sweep:
+  z_um: 50
+  phi_start_deg: 0
+  phi_stop_deg: 90
+  phi_step_deg: 10
+  theta_start_deg: 0
+  theta_stop_deg: 0
+  theta_step_deg: 90
+  focus_types:
+  - TENEGRAD
+  - SUM_OF_VARIANCE
+  - SUM_OF_GRADIENT
+  - SUM_OF_LAPLACIAN
+  - SUM_OF_INTENSITY
+  - MEAN_ALL
+  - MEAN_LOG_ALL
+  - VAR_IMAG_OVER_REAL
+bacterium:
+  length_um: 1.6
+  thickness_um: 0.8
+  x_um: 89.6
+  y_um: 89.6
+simulation:
+  holo_size: 1024
+  border: 512
+  upscale_factor: 2
+  pixel_size_um: 7.0
+  magnification: 40
+  wavelength_nm: 660
+  index_medium: 1.33
+  index_object: 1.335
+  absorption_percent_per_um: 0.0
+  sim_step_um: 0.25
+  illumination_distance_um: 110
+  illumination_mean: 1.0
+  reference_nb_planes: 16
+  sensor_noise_std_min: 0.015
+  sensor_noise_std_max: 0.015
+  source_azimuth_deg: 0
+  source_polar_deg: 0
+detection:
+  cleaning: division
+  division_power: 0.8
+  distance_ini_um: 0
+  nb_planes: 200
+  step_um: 0.5
+  high_pass: 15
+  low_pass: 250
+  sum_size: 11
+  threshold_type: PEAK_ABOVE_BG
+  nb_std_threshold: 0.5
+  connectivity: 26
+  min_voxel: 0
+  max_voxel: 0
+matching:
+  tolerance_xy_um: 3.0
+  tolerance_z_um: 5.0
+run:
+  repeats: 10
+  seed: 0
+  show_plots: false
+output:
+  output_dir: C:/TRAVAIL/RepositoriesGithub/Simu-Bacteria-Holograms/output/stat_report_orientation_focus_2026_10_13_11_25
+  save_objects: false
+  save_holograms: false

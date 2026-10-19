@@ -82,11 +82,47 @@ connectivity_6 = cp_ndimage.generate_binary_structure(3, 1)
 connectivity_18 = cp_ndimage.generate_binary_structure(3, 2)
 connectivity_26 = cp_ndimage.generate_binary_structure(3, 3)
 
+THRESHOLD_TYPES = ('STD_VAR', 'MAD', 'MAX_FOCUS', 'PEAK_ABOVE_BG')
+MAD_TO_SIGMA = 1.4826          # σ = 1,4826 × MAD pour un fond gaussien
+
+
+def threshold_center_scale(d_focus_volume, threshold_type='STD_VAR', subsample_xy=4):
+    """
+    Centre et dispersion du volume de focus, pour un seuil = centre + n × dispersion.
+      STD_VAR : moyenne et écart-type de tout le volume (comme HOLOTRACKER).
+      MAD     : médiane et 1,4826 × MAD (écart absolu médian), estimateurs robustes : peu
+                sensibles aux voxels très forts des objets. Calculés sur un sous-échantillon
+                XY (1 pixel sur subsample_xy dans chaque direction, tous les plans), car trier
+                tout le volume dépasse la mémoire du GPU. cp.percentile au lieu de cp.median,
+                qui exige nvcc sur cette machine.
+      MAX_FOCUS : centre 0 et dispersion = voxel max du volume : le seuil vaut n × max, n est
+                une fraction dans ]0, 1] (0,5 = moitié du max). Indépendant du fond, mais lié à
+                l'objet le plus fort du volume.
+      PEAK_ABOVE_BG : centre = médiane du volume (fond), dispersion = voxel max − médiane : le seuil
+                vaut fond + n × (hauteur du pic au-dessus du fond), n dans ]0, 1] (0,5 = mi-hauteur).
+                Contrairement à MAX_FOCUS, ne dépend pas du niveau du fond : à comparer entre
+                critères de focus de dynamiques différentes (fond élevé ou nul).
+    """
+    if threshold_type == 'STD_VAR':
+        return float(cp.mean(d_focus_volume)), float(cp.std(d_focus_volume))
+    if threshold_type == 'MAD':
+        sub = d_focus_volume[:, ::subsample_xy, ::subsample_xy].ravel()
+        med = float(cp.percentile(sub, 50))
+        mad = float(cp.percentile(cp.abs(sub - med), 50))
+        del sub
+        return med, MAD_TO_SIGMA * mad
+    if threshold_type == 'MAX_FOCUS':
+        return 0.0, float(cp.max(d_focus_volume))
+    if threshold_type == 'PEAK_ABOVE_BG':
+        med = float(cp.percentile(d_focus_volume[:, ::subsample_xy, ::subsample_xy].ravel(), 50))
+        return med, float(cp.max(d_focus_volume)) - med
+    raise ValueError(f"threshold_type = {threshold_type!r} : valeurs possibles {THRESHOLD_TYPES}")
+
+
 ### Calcule du seuil global sur tout un volume
-def calc_threshold(d_focus_volume, nbStdVar):
-    mean = cp.mean(d_focus_volume)
-    stdVar = cp.std(d_focus_volume)
-    threshold = mean.item() + nbStdVar * stdVar.item()
+def calc_threshold(d_focus_volume, nbStdVar, threshold_type='STD_VAR'):
+    center, scale = threshold_center_scale(d_focus_volume, threshold_type)
+    threshold = center + nbStdVar * scale
     return(threshold)
 
 #binarise un volume de taille sizeX, sizeY, sizeZ
@@ -194,7 +230,7 @@ def CCL3D(d_bin_volume, d_focus_volume,  t_threshold, threshold, n_connectivity 
     return(labels, num_label)
 
 @jit.rawkernel()
-def device_CCA(d_volume_label, d_volume_focus, d_features, sizeX, sizeY, sizeZ, dx, dy, dz):
+def device_CCA(d_volume_label, d_volume_focus, d_features, sizeX, sizeY, sizeZ, dx, dy, dz, z_offset):
 
     index = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
     planSize = sizeX * sizeY
@@ -209,7 +245,9 @@ def device_CCA(d_volume_label, d_volume_focus, d_features, sizeX, sizeY, sizeZ, 
             index = label-1
             posX = ii * dx
             posY = jj * dy
-            posZ = kk * dz
+            # z_offset = distance de propagation du premier plan (distance_ini) : Z absolu,
+            # comme HOLOTRACKER, et non relatif au premier plan reconstruit
+            posZ = z_offset + kk * dz
             focus = d_volume_focus[kk, jj, ii]
             pxSumX = posX * focus
             pxSumY = posY * focus
@@ -286,7 +324,7 @@ def CCA_CUDA(h_volume_label, d_volume_focus, number_of_labels, i_image, sizeX, s
     n_blocks = (sizeX * sizeY * sizeZ)//1024 +1
     d_volume_label = cp.asarray(h_volume_label)
 
-    device_CCA[n_blocks, n_threads](d_volume_label, d_volume_focus, d_features, sizeX, sizeY, sizeZ, dx, dy, dz)
+    device_CCA[n_blocks, n_threads](d_volume_label, d_volume_focus, d_features, sizeX, sizeY, sizeZ, dx, dy, dz, 0.0)
     
     h_features = cp.asnumpy(d_features)
 
@@ -310,7 +348,9 @@ def CCA_CUDA(h_volume_label, d_volume_focus, number_of_labels, i_image, sizeX, s
 
     return features
 
-def CCA_CUDA_float(volume_label, d_volume_focus, number_of_labels, i_image, sizeX, sizeY, sizeZ, dx, dy, dz):
+def CCA_CUDA_float(volume_label, d_volume_focus, number_of_labels, i_image, sizeX, sizeY, sizeZ, dx, dy, dz, z_offset = 0.0):
+    """Barycentres pondérés par le focus. z_offset : distance du premier plan (distance_ini),
+    ajoutée à Z pour une coordonnée absolue (comme HOLOTRACKER). Même unité que dz."""
 
     d_CCA = cp.ndarray(shape = (number_of_labels, 5), dtype = cp.float32)
 
@@ -327,9 +367,9 @@ def CCA_CUDA_float(volume_label, d_volume_focus, number_of_labels, i_image, size
 
     if isinstance(volume_label, np.ndarray):
         v_label = cp.asarray(volume_label)
-        device_CCA[n_blocks, n_threads](v_label, d_volume_focus, d_CCA, sizeX, sizeY, sizeZ, dx, dy, dz)
+        device_CCA[n_blocks, n_threads](v_label, d_volume_focus, d_CCA, sizeX, sizeY, sizeZ, dx, dy, dz, float(z_offset))
     else:
-        device_CCA[n_blocks, n_threads](volume_label, d_volume_focus, d_CCA, sizeX, sizeY, sizeZ, dx, dy, dz)
+        device_CCA[n_blocks, n_threads](volume_label, d_volume_focus, d_CCA, sizeX, sizeY, sizeZ, dx, dy, dz, float(z_offset))
 
     h_CCA = cp.asnumpy(d_CCA)
 

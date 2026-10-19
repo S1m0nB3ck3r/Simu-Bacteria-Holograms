@@ -1,0 +1,31 @@
+# =============================================================================
+# stat_report_dense_segmentation — méthodes de segmentation / localisation en milieu dense
+# Lancer : python stats/stat_report_dense_segmentation.py stats/stat_report_dense_segmentation.yaml
+#
+# Relit les hologrammes de FOCUS_REPORT/DENSE (5 à 200 bactéries de 1,5–2 × 0,8 µm, vérité terrain)
+# et compare 5 méthodes : rappel, précision, rappel des bactéries couchées, erreur de position
+# X / Y / Z, temps de calcul. Durée : ~10 min.
+# =============================================================================
+
+output_dir: ../SEGMENTATION_REPORT
+
+# Hologrammes et paramètres de simulation / reconstruction / appariement : ceux du rapport DENSE
+dense_config: stat_report_dense_focus.yaml          # relatif à ce fichier
+holograms_dir: ../FOCUS_REPORT/DENSE                 # contient holograms/N<densité>/
+
+detection:
+  focus_types: [SUM_OF_VARIANCE]     # critère(s) de focus ; TENEGRAD possible
+  # seuil local (méthodes 2 à 5)
+  mesh_z: 25                         # plans (12,5 µm à 0,5 µm)
+  mesh_xy: 64                        # px (11,2 µm à 0,175 µm)
+  clip_kappa: 3.0
+  clip_iterations: 3
+  sigma_floor_percentile: 10
+  # boîte des maxima locaux (méthodes 3 à 5) = largeur de la réponse d'une bactérie réaliste
+  box_xy_um: 2.1
+  box_z_um: 5.3
+  # K balayés (seuil = moyenne + K·σ pour le global, fond + K·σ local pour les autres)
+  k_list: [6, 8, 10, 12, 15, 20, 25, 30]
+  max_objects: 20000                 # au-delà, le seuil est jugé trop bas (volume de bruit)
+  # K « fixe » d'une méthode : celui qui maximise le F1 moyen sur les densités >= fixed_k_min_density
+  fixed_k_min_density: 10

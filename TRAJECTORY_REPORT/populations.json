@@ -1,0 +1,43 @@
+{
+ "nageuses": {
+  "persistance": {
+   "1": 0.959,
+   "2": 0.911,
+   "3": 0.87,
+   "5": 0.851,
+   "8": 0.82,
+   "12": 0.808,
+   "20": 0.756,
+   "30": 0.733
+  },
+  "n_virages": 876,
+  "virage_median": 19.7,
+  "part_gt_120": 0.023,
+  "part_lt_30": 0.676,
+  "demi_tours_par_image": 0.0124,
+  "vitesse_lissee_mediane": 0.864,
+  "vitesse_p10_p90": [
+   0.499,
+   1.175
+  ],
+  "angle_polaire_vitesse_median": 62.8,
+  "part_quasi_horizontale_phi_gt_60": 0.54
+ },
+ "non nageuses": {
+  "persistance": {
+   "1": 0.694,
+   "2": 0.343,
+   "3": 0.069,
+   "5": 0.008,
+   "8": 0.086,
+   "12": 0.059,
+   "20": 0.107,
+   "30": 0.106
+  },
+  "n_virages": 178,
+  "virage_median": 143.6,
+  "part_gt_120": 0.64,
+  "part_lt_30": 0.174,
+  "demi_tours_par_image": 0.315
+ }
+}

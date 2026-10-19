@@ -42,6 +42,10 @@ class Focus_type(Enum):
     SUM_OF_GRADIENT = 6
     MEAN_ALL = 7
     MEAN_LOG_ALL = 8
+    VAR_IMAG_OVER_REAL = 9     # exige un volume COMPLEXE (voir focus_var_imag_over_real)
+
+# critères qui exigent le champ complexe reconstruit, et non son module
+COMPLEX_FOCUS_TYPES = (Focus_type.VAR_IMAG_OVER_REAL,)
 
 def focus_sum_of_gradient(d_volume_IN, d_focus_OUT, sumSize):
     """
@@ -258,6 +262,43 @@ def focus_MEAN_LOG_ALL(d_volume_IN, d_focus_OUT, sumSize, d_accumulator=None):
         # Store averaged result for this plane (exp of mean of logs)
         d_focus_OUT[plane_idx, :, :] = cp.exp(accumulator_plane / count)
 
+def focus_plane_var_imag_over_real(plane_complex, sumSize):
+    """
+    Critère de focus pour objet de phase, sur UN plan complexe :
+        var_locale(Im E) / var_locale(Re E)
+    variances locales sur une fenêtre carrée sumSize × sumSize (E[x²] − E[x]²).
+
+    Au plan de focus d'un objet de phase (t = exp(iφ) ≈ 1 + iφ), la perturbation est
+    imaginaire : la variance de Im domine. Hors focus, la propagation convertit la phase en
+    amplitude, Re et Im se mélangent et le rapport tend vers 1, comme dans le bruit. Un objet
+    absorbant donne au contraire un rapport < 1 au focus.
+
+    Le plan doit être référencé en phase : porteuse exp(2iπ z/λ) retirée (voir
+    propagation.volume_propag_angular_spectrum_complex(remove_carrier=True)), sinon Re et Im
+    tournent d'un plan à l'autre. Le rapport est sans unité et ne dépend pas de l'éclairage.
+    """
+    sumSize = (sumSize // 2) * 2 + 1
+    re = cp.real(plane_complex).astype(cp.float32)
+    im = cp.imag(plane_complex).astype(cp.float32)
+    var_re = cp_ndimage.uniform_filter(re * re, size=sumSize, mode='reflect') -         cp.square(cp_ndimage.uniform_filter(re, size=sumSize, mode='reflect'))
+    var_im = cp_ndimage.uniform_filter(im * im, size=sumSize, mode='reflect') -         cp.square(cp_ndimage.uniform_filter(im, size=sumSize, mode='reflect'))
+    var_re = cp.maximum(var_re, 0)
+    var_im = cp.maximum(var_im, 0)
+    # plancher relatif : évite la division par une variance quasi nulle
+    floor = cp.float32(1e-6) * cp.mean(var_re) + cp.float32(1e-30)
+    return (var_im / cp.maximum(var_re, floor)).astype(cp.float32)
+
+
+def focus_var_imag_over_real(d_volume_IN, d_focus_OUT, sumSize):
+    """Version volume de focus_plane_var_imag_over_real : d_volume_IN complexe (Z, Y, X)."""
+    if not cp.iscomplexobj(d_volume_IN):
+        raise ValueError("VAR_IMAG_OVER_REAL exige un volume complexe (champ reconstruit, porteuse "
+                         "retirée), pas le module : voir propagation.volume_propag_angular_spectrum_complex"
+                         "(remove_carrier=True) ou volume_propag_angular_spectrum_to_focus_complex")
+    for p in range(d_volume_IN.shape[0]):
+        d_focus_OUT[p, :, :] = focus_plane_var_imag_over_real(d_volume_IN[p, :, :], sumSize)
+
+
 def focus(d_volume_IN, d_focus_OUT, sumSize, type_of_focus):
 
     if type_of_focus == Focus_type.TENEGRAD:
@@ -274,3 +315,5 @@ def focus(d_volume_IN, d_focus_OUT, sumSize, type_of_focus):
         focus_MEAN_ALL(d_volume_IN, d_focus_OUT, sumSize)
     elif type_of_focus == Focus_type.MEAN_LOG_ALL:
         focus_MEAN_LOG_ALL(d_volume_IN, d_focus_OUT, sumSize)
+    elif type_of_focus == Focus_type.VAR_IMAG_OVER_REAL:
+        focus_var_imag_over_real(d_volume_IN, d_focus_OUT, sumSize)

@@ -13,10 +13,10 @@ Modify `configs/config_bacteria_random.json` or `configs/config_sphere_random.js
     "nb_objects": 50,
     "holo_size_xy": 1024,
     "z_size": 200,
-    "length_min": 3.0e-6,
-    "length_max": 4.0e-6,
-    "thickness_min": 1.0e-6,
-    "thickness_max": 2.0e-6,
+    "length_min": 1.5e-6,
+    "length_max": 2.0e-6,
+    "thickness_min": 0.8e-6,
+    "thickness_max": 0.8e-6,
     "wavelength": 660e-9,
     ...
 }
@@ -74,8 +74,8 @@ python main_simu_hologram.py configs/config_bacteria_random.json
 | Parameter | Unit | Description |
 |-----------|------|-------------|
 | `illumination_mean` | - | Mean illumination level |
-| `noise_std_min` | - | Minimum noise standard deviation |
-| `noise_std_max` | - | Maximum noise standard deviation |
+| `sensor_noise_std_min` | - | Minimum sensor noise std, relative to the background, added to the intensity after propagation (measured on real film: 0.015) |
+| `sensor_noise_std_max` | - | Maximum sensor noise std (relative to the background) |
 
 ### Save Options
 See [CONFIG_SAVE_OPTIONS.md](CONFIG_SAVE_OPTIONS.md) for details.
@@ -111,8 +111,8 @@ simu_bacteria/
     "holo_size_xy": 2048,
     "z_size": 300,
     "nb_objects": 100,
-    "length_min": 2.0e-6,
-    "length_max": 5.0e-6,
+    "length_min": 1.5e-6,
+    "length_max": 2.0e-6,
     "pix_size": 5.5e-6,
     "magnification": 60.0,
     "wavelength": 405e-9

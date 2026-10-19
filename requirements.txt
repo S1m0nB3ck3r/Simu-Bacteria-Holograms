@@ -38,6 +38,12 @@ torchmetrics>=1.7.0
 # Connected components 3D (for CCL3D module)
 connected-components-3d>=3.10.0
 
+# GUI theme (stats/GUI_holo_stats.py)
+ttkbootstrap>=1.14.2
+
+# YAML configuration (stats/holo_stats.py, command-line mode)
+PyYAML>=6.0
+
 # ============================================================================
 # NOTES
 # ============================================================================
@@ -62,4 +68,19 @@ connected-components-3d>=3.10.0
 #
 # 5. Verification:
 #    python -c "import cupy as cp; print(f'CuPy OK - {cp.cuda.runtime.getDeviceCount()} GPU(s)')"
+#
+# 6. CUDA 11.8 + Visual Studio 2022 >= 17.10 (MSVC 14.40 and newer):
+#    - Most CuPy kernels are compiled with NVRTC and work. A few functions
+#      (cupy.median, cupy.bincount) are compiled with nvcc, which calls the
+#      Visual Studio C++ compiler. CUDA 11.8 rejects MSVC 14.40+:
+#        host_config.h: fatal error C1189: unsupported Microsoft Visual Studio version
+#    - The repository code avoids these functions, so it runs as is.
+#    - To use them, run Python in an MSVC 14.29 (VS 2019 toolset) environment,
+#      e.g. with the launcher at the repository root:
+#        lancer_avec_msvc1429.bat stats\GUI_holo_stats.py
+#      (requires the "MSVC v142 - VS 2019 C++ x64/x86 build tools" component,
+#      installable from the Visual Studio Installer)
+#    - Passing -ccbin to nvcc is NOT enough: the MSVC 14.40+ headers are still
+#      used and fail with "error STL1002: expected CUDA 12.4 or newer".
+#    - Alternative: CUDA >= 12.4 with cupy-cuda12x.
 #
