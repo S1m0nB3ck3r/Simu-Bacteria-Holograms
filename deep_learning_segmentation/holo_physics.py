@@ -88,8 +88,67 @@ class Reconstructor:
 
 
 # =============================================================================
-# NORMALISATION LOCALE (médiane / MAD par maille, comme le seuil « local MAD » d'HOLOTRACKER)
+# NORMALISATION MAD : globale (volume entier) ou locale (par maille), comme les seuils d'HOLOTRACKER
 # =============================================================================
+
+@torch.no_grad()
+def global_mad_stats(V, max_samples=4_000_000):
+    """
+    Statistiques de rang du volume entier V (C, Z, Y, X) : médiane de chaque canal (C,) et σ = 1,4826 × MAD,
+    commune aux canaux (moyenne des MAD des canaux : la relation de phase entre Re et Im est conservée).
+    Voxels sous-échantillonnés à pas régulier (impair : pas d'alignement sur les dimensions) jusqu'à
+    max_samples par canal ; les bactéries (≈ 0,15 % des voxels à 400 bactéries) ne déplacent presque pas ces
+    statistiques, à la différence de la moyenne et de l'écart-type. Retourne (médianes, σ) en flottants Python.
+    """
+    C = V.shape[0]
+    flat = V.reshape(C, -1)
+    step = max(1, flat.shape[1] // max_samples) | 1
+    t = flat[:, ::step].float()
+    med = t.median(dim=1).values
+    sig = float((t - med[:, None]).abs().median(dim=1).values.mean()) * 1.4826
+    return [float(m) for m in med], sig
+
+
+@torch.no_grad()
+def global_std_stats(V, max_samples=4_000_000):
+    """
+    Moyenne de chaque canal (C,) et écart-type commun aux canaux (moyenne des écarts-types : phase conservée),
+    sur le volume entier sous-échantillonné comme global_mad_stats ; même forme de retour.
+    """
+    C = V.shape[0]
+    flat = V.reshape(C, -1)
+    step = max(1, flat.shape[1] // max_samples) | 1
+    t = flat[:, ::step].float()
+    return [float(m) for m in t.mean(dim=1)], float(t.std(dim=1).mean())
+
+
+GLOBAL_STATS = {'mad': global_mad_stats, 'std': global_std_stats}
+
+
+def apply_global(V, stats):
+    """(V − centre) / σ ; stats = (centres par canal, σ) de global_mad_stats, global_std_stats ou d'un film."""
+    med, sig = stats
+    return (V - torch.as_tensor(med, device=V.device, dtype=V.dtype).view(-1, 1, 1, 1)) / (sig + 1e-6)
+
+
+def film_mad_stats(volumes, kind='mad'):
+    """
+    Statistiques « film » : médiane, sur les volumes donnés (itérable), des centres et des σ de chacun ;
+    kind 'mad' (médiane, 1,4826 × MAD) ou 'std' (moyenne, écart-type).
+    """
+    st = [GLOBAL_STATS[kind](V) for V in volumes]
+    if not st:
+        raise ValueError("aucun hologramme pour les statistiques du film")
+    med = np.median(np.array([s[0] for s in st]), axis=0)
+    return [float(m) for m in med], float(np.median([s[1] for s in st]))
+
+
+def mesh_voxels(mesh_um, step_z_um, step_xy_um, sub_xy=4):
+    """Maille (µm, Z puis XY) -> voxels du volume (Z, Y, X) ; XY multiple de sub_xy (sous-échantillonnage)."""
+    mz = max(1, int(round(mesh_um[0] / step_z_um)))
+    mxy = max(sub_xy, int(round(mesh_um[1] / step_xy_um / sub_xy)) * sub_xy)
+    return (mz, mxy, mxy)
+
 
 @torch.no_grad()
 def local_mad_normalize(V, mesh=(13, 32, 32), sub=(1, 4, 4)):

@@ -49,10 +49,18 @@ import torch
 import torch.nn.functional as F
 from scipy.spatial import cKDTree
 
-FINE = dict(nz=32, nxy=40, dz_um=0.25)
-TOL = dict(xy=1.0, z=2.0)            # attribution d'une fenêtre à une bactérie
-HEAT = dict(sigma_xy_um=0.25, sigma_z_um=0.5)
-INFER = dict(heat_thr=0.3, nms=(5, 5, 5), border=2, same_xy_um=0.5, same_z_um=1.0, vmin=20, dup_iou=0.5)
+# valeurs par défaut (un modèle enregistre les siennes : cfg['fine'], 'crop', 'heat', 'tol' ; INFER se règle à l'inférence)
+FINE = dict(nz=32, nxy=40, dz_um=0.25)   # fenêtre fine (voxels) et pas Z fin (= pas des masques du jeu)
+REFOCUS_CROP = 64                        # carré du volume grossier refocalisé autour de chaque point (px grossiers)
+TOL = dict(xy=1.0, z=2.0)                # attribution d'une fenêtre à une bactérie (µm, distance normalisée < 1)
+HEAT = dict(sigma_xy_um=0.25, sigma_z_um=0.5)   # gaussiennes de la carte fine des centres (cible)
+INFER = dict(heat_thr=0.3,               # seuil des maxima de la carte fine des centres (second tour)
+             nms=(5, 5, 5),              # fenêtre des maxima locaux de cette carte (Z, Y, X), voxels fins
+             border=2,                   # voxels ignorés au bord de chaque fenêtre (maxima tronqués)
+             same_xy_um=0.5, same_z_um=1.0,   # deux centres plus proches sont le même (second tour)
+             vmin=20,                    # voxels minimum d'une instance
+             dup_iou=0.5,                # doublons : IoU des masques au-delà de laquelle on fusionne
+             dup_xy_um=1.5, dup_z_um=3.0)     # doublons : voisinage dans lequel l'IoU est testée
 
 
 # =============================================================================
@@ -66,10 +74,14 @@ class LocalRefocus:
     du masque du simulateur : origine (k0, r0, c0) entière, voxel (k, r, c) <-> (k·dz, r·dx, c·dx).
     """
 
-    def __init__(self, rec, nz=FINE['nz'], nxy=FINE['nxy'], dz_um=FINE['dz_um'], crop=64, chunk=32):
-        if rec.decim != 2:
-            raise ValueError("LocalRefocus suppose un volume grossier décimé ×2")
+    def __init__(self, rec, nz=FINE['nz'], nxy=FINE['nxy'], dz_um=FINE['dz_um'], crop=REFOCUS_CROP, chunk=32):
+        if rec.decim not in (1, 2, 4):
+            raise ValueError("LocalRefocus : volume grossier décimé ×1, ×2 ou ×4")
+        if crop % 2 or nxy > rec.decim * crop * 3 // 4:
+            raise ValueError(f"carré refocalisé {crop} px grossiers trop petit pour une fenêtre de {nxy} voxels fins "
+                             f"(décimation {rec.decim})")
         self.rec, self.nz, self.nxy, self.dz, self.crop, self.chunk = rec, nz, nxy, dz_um, crop, chunk
+        self.up = rec.decim                       # suréchantillonnage spectral grossier -> fin
         self.dx = rec.dx_um                       # grille fine
         self.st = rec.dx_um * rec.decim           # grille grossière
         dev = rec.device
@@ -100,15 +112,15 @@ class LocalRefocus:
         return out, org
 
     def _chunk(self, V, org):
-        dev, B, cr, up = V.device, len(org), self.crop, 2
+        dev, B, cr, up = V.device, len(org), self.crop, self.up
         Z, m = V.shape[1], V.shape[2]
         zc = self.z_coarse
         # plan grossier le plus proche du centre de la fenêtre
         zmid = torch.as_tensor((org[:, 0] + self.nz / 2) * self.dz, device=dev, dtype=torch.float32)
         kc = torch.argmin(torch.abs(zmid[:, None] - zc[None]), dim=1)                      # (B,)
-        # recadrage grossier : la colonne fine c <-> colonne grossière c / 2 ; centre de la fenêtre fine
-        cy = (org[:, 1] + self.nxy // 2) // 2
-        cx = (org[:, 2] + self.nxy // 2) // 2
+        # recadrage grossier : la colonne fine c <-> colonne grossière c / up ; centre de la fenêtre fine
+        cy = (org[:, 1] + self.nxy // 2) // up
+        cx = (org[:, 2] + self.nxy // 2) // up
         j0y = torch.as_tensor(cy - cr // 2, device=dev)
         j0x = torch.as_tensor(cx - cr // 2, device=dev)
         ar = torch.arange(cr, device=dev)
@@ -125,15 +137,17 @@ class LocalRefocus:
         zf = torch.as_tensor(org[:, 0], device=dev, dtype=torch.float32)[:, None] + torch.arange(self.nz, device=dev)
         dz = zf * self.dz - zc[kc][:, None]                                                  # (B, nz)
         G = Fe[:, None] * torch.exp((2j * math.pi) * dz[:, :, None, None] * self.kz[None, None])
-        # suréchantillonnage ×2 : bourrage du spectre centré
-        G = torch.fft.fftshift(G, dim=(-2, -1))
-        p = cr // 2
-        G = F.pad(torch.view_as_real(G), (0, 0, p, p, p, p))
-        G = torch.view_as_complex(G.contiguous())
-        e = torch.fft.ifft2(torch.fft.ifftshift(G, dim=(-2, -1))) * (up * up)              # (B, nz, 2cr, 2cr)
-        # grille fine du recadrage : colonne fine 2·j0 + q ; fenêtre fine à partir de org
-        qy = torch.as_tensor(org[:, 1], device=dev) - 2 * j0y
-        qx = torch.as_tensor(org[:, 2], device=dev) - 2 * j0x
+        # suréchantillonnage ×up : bourrage du spectre centré (rien à faire pour up = 1)
+        if up > 1:
+            G = torch.fft.fftshift(G, dim=(-2, -1))
+            p = (up - 1) * cr // 2
+            G = F.pad(torch.view_as_real(G), (0, 0, p, p, p, p))
+            G = torch.view_as_complex(G.contiguous())
+            G = torch.fft.ifftshift(G, dim=(-2, -1))
+        e = torch.fft.ifft2(G) * (up * up)                                                  # (B, nz, up·cr, up·cr)
+        # grille fine du recadrage : colonne fine up·j0 + q ; fenêtre fine à partir de org
+        qy = torch.as_tensor(org[:, 1], device=dev) - up * j0y
+        qx = torch.as_tensor(org[:, 2], device=dev) - up * j0x
         a = torch.arange(self.nxy, device=dev)
         ry, rx = qy[:, None] + a[None], qx[:, None] + a[None]                                # (B, nxy)
         bi = torch.arange(B, device=dev)[:, None, None, None]
@@ -181,7 +195,8 @@ def assign(centers_um, pts_um, tol=TOL):
 class CropTargets:
     """Cibles (B, 2, nz, nxy, nxy) d'un hologramme : self = instance attribuée, others = les autres."""
 
-    def __init__(self, item, nz=FINE['nz'], nxy=FINE['nxy']):
+    def __init__(self, item, nz=FINE['nz'], nxy=FINE['nxy'], heat=None):
+        self.heat = dict(HEAT, **(heat or {}))
         self.inst = load_instances(item)
         self.centers = item['bacts'][:, :3].astype(np.float64)
         self.tree = cKDTree(self.centers) if len(self.centers) else None
@@ -206,9 +221,10 @@ class CropTargets:
                 paste(t[b, 0 if j == owner[b] else 1], tuple(org[b]), m, o)
                 if heat:
                     x, y, z = self.centers[j]
-                    g = (np.exp(-(zz - z) ** 2 / (2 * HEAT['sigma_z_um'] ** 2))[:, None, None]
-                         * np.exp(-(yy - y) ** 2 / (2 * HEAT['sigma_xy_um'] ** 2))[None, :, None]
-                         * np.exp(-(xx - x) ** 2 / (2 * HEAT['sigma_xy_um'] ** 2))[None, None, :])
+                    sz, sxy = self.heat['sigma_z_um'], self.heat['sigma_xy_um']
+                    g = (np.exp(-(zz - z) ** 2 / (2 * sz ** 2))[:, None, None]
+                         * np.exp(-(yy - y) ** 2 / (2 * sxy ** 2))[None, :, None]
+                         * np.exp(-(xx - x) ** 2 / (2 * sxy ** 2))[None, None, :])
                     np.maximum(t[b, 2], g, out=t[b, 2])
                     k = int(round(z / self.dz)) - org[b, 0]
                     r = int(round(y / self.dx)) - org[b, 1]
@@ -390,13 +406,14 @@ def mask_center(mask, org, dx_um, dz_um):
 
 
 @torch.no_grad()
-def segment_instances(model, V, pos1, refocus, cfg=INFER, rounds=2):
+def segment_instances(model, V, pos1, refocus, cfg=None, rounds=2):
     """
     Instances (liste de dict : origin, mask (bool), center (µm), score, round, n) à partir des détections pos1.
     Tour 1 : fenêtres sur pos1. Tour t > 1 : fenêtres sur les centres vus (carte des centres) qui ne sont
     proches d'aucune instance déjà trouvée. Doublons : instances proches dont les masques se recouvrent
     (IoU > dup_iou) -> on garde la plus grosse.
     """
+    cfg = dict(INFER, **(cfg or {}))
     dx, dz = refocus.dx, refocus.dz
     inst, cand = [], np.asarray(pos1, dtype=np.float64).reshape(-1, 3)
     for rnd in range(1, rounds + 1):
@@ -414,11 +431,11 @@ def segment_instances(model, V, pos1, refocus, cfg=INFER, rounds=2):
                              score=float(sc[i]), round=rnd, n=int(nv[i])))
         if rnd == rounds:
             break
-        peaks, psc, _ = window_peaks(H, org, dx, dz, cfg['heat_thr'])
+        peaks, psc, _ = window_peaks(H, org, dx, dz, cfg['heat_thr'], tuple(cfg['nms']), int(cfg['border']))
         if len(peaks) == 0:
             break
         # centres vus dans plusieurs fenêtres : regroupés (le plus sûr d'abord)
         uniq = peaks[nms_points(peaks, psc, cfg['same_xy_um'], cfg['same_z_um'])]
         found = np.array([d['center'] for d in inst]) if inst else np.zeros((0, 3))
         cand = uniq[~_near(uniq, found, cfg['same_xy_um'] * 2, cfg['same_z_um'] * 2)]
-    return dedup_instances(inst, 1.5, 3.0, cfg['dup_iou'])
+    return dedup_instances(inst, cfg['dup_xy_um'], cfg['dup_z_um'], cfg['dup_iou'])

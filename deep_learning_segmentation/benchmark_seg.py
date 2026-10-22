@@ -7,9 +7,10 @@ Description:
 Benchmark de la chaîne complète « positions 3D + volume segmenté par instance » : étage 1 (U-Net 3D sur le
 volume grossier, carte des centres ; models/stage1 par défaut, 0–208 µm) puis étage 2
 (seg_stage2.segment_instances, deux tours : fenêtres sur les détections, puis sur les centres vus par
-l'étage 2 et non encore segmentés ; models/stage2), sur les jeux de gen_seg_sim_data.sh (test : N = 50 à
-400, 30 % des bactéries à moins de 4 µm d'une autre ; paires rapprochées). Vérité : masques d'instance du
-simulateur (fraction ≥ 0,5) et positions.
+l'étage 2 et non encore segmentés ; models/stage2), sur le dossier test/ d'un jeu de GUI_generate_dataset.py
+(datasets/<jeu>, --data) ou de generate_dataset.py (data/<jeu>), et, s'il existe, un jeu de paires rapprochées
+(--pairs_dir, generate_dataset.py --splits pairs). Vérité : masques d'instance du simulateur (fraction ≥ 0,5) et
+positions.
   - détection : rappel, précision, F1 par position (appariement hongrois 3 µm / 5 µm), pour l'étage 1
     seul et pour les instances finales (barycentres des masques) ;
   - segmentation : appariement hongrois instances prédites / vraies maximisant l'IoU (masques entiers) ;
@@ -26,7 +27,7 @@ prédites et vraies ; instances/ : volume segmenté de quelques hologrammes (ori
 instance, mesures CSV) et projection des instances sur l'hologramme, z en µm).
 
 Utilisation :
-  python deep_learning_segmentation/benchmark_seg.py
+  python deep_learning_segmentation/benchmark_seg.py --data dataset_sim_200um [--pairs_dir datasets/pairs/pairs]
 
 Author: Simon BECKER
 Date: 2026-10-18
@@ -128,6 +129,8 @@ def evaluate_item(it, pos1, insts):
 
 def run(items, m1, cfg1, thr1, m2, rec, refocus, infer, timings=None, oracle=False, collect=None, rounds=2):
     all_rows, dets, errs1 = [], [], []
+    film = tr.film_stats_of([it['h'].astype(np.float32) + 1.0 for it in items], rec, cfg1) \
+        if cfg1.get('norm') in tr.FILM_NORMS and not oracle else None
     for k, it in enumerate(items):
         sync(); t0 = time.perf_counter()
         V = rec(it['h'].astype(np.float32) + 1.0)
@@ -136,7 +139,7 @@ def run(items, m1, cfg1, thr1, m2, rec, refocus, infer, timings=None, oracle=Fal
             pos1 = it['bacts'][:, :3].astype(np.float64)
             t2_ = t3 = t1
         else:
-            logits = det.infer_volume(m1, tr.to_input(V, cfg1))
+            logits = det.infer_volume(m1, tr.to_input(V, cfg1, film))
             sync(); t2_ = time.perf_counter()
             pos1, _ = tr.detect(logits, cfg1['target'], thr1, rec)
             del logits
@@ -406,23 +409,37 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--stage1', default=os.path.join(DL_DIR, 'models', 'stage1'))
     ap.add_argument('--stage2', default=os.path.join(DL_DIR, 'models', 'stage2'))
-    ap.add_argument('--data', default=os.path.join(DL_DIR, 'data', 'seg_sim'))
+    ap.add_argument('--data', default='dataset_sim_200um',
+                    help="jeu contenant test/ (avec masques d'instance) : chemin, ou nom dans datasets/ ou data/")
+    ap.add_argument('--pairs_dir', default=None,
+                    help="dossier des hologrammes de paires (generate_dataset.py --splits pairs) ; défaut : <jeu>/pairs s'il existe")
     ap.add_argument('--out', default=os.path.join(DL_DIR, 'resultats', 'benchmark_segmentation'))
     ap.add_argument('--limit', type=int, default=None)
     ap.add_argument('--rounds', type=int, default=2)
     ap.add_argument('--n_examples', type=int, default=4)
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
+    # jeu : chemin tel quel, sinon dans deep_learning_segmentation/, datasets/ ou data/
+    args.data = next((p for p in (args.data, os.path.join(DL_DIR, args.data), os.path.join(DL_DIR, 'datasets', args.data),
+                                  os.path.join(DL_DIR, 'data', args.data)) if os.path.isdir(os.path.join(p, 'test'))), None)         or sys.exit(f"pas de dossier test/ pour le jeu {args.data!r} (chemin, datasets/ ou data/)")
+    print(f"jeu : {args.data}", flush=True)
 
     m1, cfg1, thr1 = bm.load_model(args.stage1)
-    tr.GRID.update(cfg1['grid'])
+    tr.apply_model_settings(cfg1)
     m2, cfg2 = load_stage2(args.stage2)
     infer = dict(s2.INFER, vmin=cfg2.get('vmin', s2.INFER['vmin']))
     test = t2.load_seg_split(os.path.join(args.data, 'test'), args.limit)
-    pairs_dir = os.path.join(args.data, 'pairs')
+    pairs_dir = args.pairs_dir or os.path.join(args.data, 'pairs')
     pairs = t2.load_seg_split(pairs_dir, args.limit) if os.path.isdir(pairs_dir) else []
+    print(f"paires : {pairs_dir if pairs else 'aucune'}", flush=True)
     rec = tr.make_reconstructor(test[0]['meta'])
-    refocus = s2.LocalRefocus(rec)
+    # grille fine de l'étage 2 : celle de son entraînement ; elle doit être celle des masques du jeu
+    fine = dict(s2.FINE, **cfg2.get('fine', {}))
+    if abs(test[0]['meta']['mask_grid']['dz_um'] - fine['dz_um']) > 1e-6:
+        sys.exit(f"pas des masques du jeu {test[0]['meta']['mask_grid']['dz_um']} µm ≠ grille fine de l'étage 2 "
+                 f"{fine['dz_um']} µm")
+    refocus = s2.LocalRefocus(rec, nz=fine['nz'], nxy=fine['nxy'], dz_um=fine['dz_um'],
+                              crop=cfg2.get('refocus_crop', s2.REFOCUS_CROP))
 
     res = dict(stage1=os.path.basename(args.stage1), stage2=os.path.basename(args.stage2), infer=infer)
     timings, col, seen = [], {}, set()

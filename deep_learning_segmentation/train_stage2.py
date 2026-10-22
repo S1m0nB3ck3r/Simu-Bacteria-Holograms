@@ -34,6 +34,7 @@ GNU General Public License v3.0
 import argparse
 import glob
 import json
+import math
 import os
 import sys
 import time
@@ -47,12 +48,40 @@ import holo_physics as hp
 import seg_stage2 as s2
 import detection as det
 import train as tr
+import simu_dataset as sd
 from unet3d import UNet3D, count_parameters
 
-GRID = dict(z0_um=0.0, step_z_um=1.0, nb_planes=208, decim=2)
+# =============================================================================
+# RÉGLAGES PAR DÉFAUT — options de la ligne de commande et de GUI_train.py (onglet Étage 2) ; les valeurs
+# utilisées sont enregistrées dans config.json et model_best.pt, et reprises par l'inférence
+# =============================================================================
+DECIM = 2                   # décimation latérale du volume grossier (1, 2 ou 4) : la même que l'étage 1
+HIGH_PASS = 15              # filtre passe-haut de la reconstruction (px de Fourier du capteur, 0 : aucun)
+LOW_PASS = 250              # filtre passe-bas (0 : aucun)
+Z_STEP_UM = 1.0             # pas Z du volume grossier d'où partent les fenêtres (µm)
+FINE_NZ = 32                # fenêtre fine : nombre de plans (pas = pas des masques du jeu, 0,25 µm : 8 µm)
+FINE_NXY = 40               # fenêtre fine : côté en voxels fins (pixel objet, 0,175 µm : 7 µm)
+REFOCUS_CROP = 64           # carré du volume grossier refocalisé autour de chaque fenêtre (px grossiers)
+HEAT_SIGMA_XY_UM = 0.25     # cible : σ des gaussiennes de la carte fine des centres en XY (µm)
+HEAT_SIGMA_Z_UM = 0.5       # idem en Z (µm)
+TOL_XY_UM = 1.0             # une fenêtre appartient à la bactérie la plus proche si elle est à moins de TOL_XY en XY
+TOL_Z_UM = 2.0              # et TOL_Z en Z (distance normalisée < 1) ; sinon fenêtre négative (self vide)
+CROPS_PER_HOLO = 16         # fenêtres tirées par hologramme reconstruit
+NEG_FRACTION = 0.1          # part des fenêtres au hasard (fausses détections)
+MID_FRACTION = 0.15         # part des fenêtres au milieu de deux voisines proches (détection fusionnée)
+MID_PAIR_UM = 3.0           # « voisines proches » : centres à moins de MID_PAIR_UM
+JITTER_XY_UM = 0.25         # décalage aléatoire (σ) des fenêtres, XY : erreur de position simulée de l'étage 1
+JITTER_Z_UM = 0.5           # idem en Z
+VMIN = 20                   # voxels minimum d'une instance (validation, repris à l'inférence)
+
+GRID = dict(z0_um=0.0, step_z_um=Z_STEP_UM, nb_planes=208, decim=DECIM)
+RECON = dict(high_pass=HIGH_PASS, low_pass=LOW_PASS)
 
 
 def load_seg_split(path, limit=None):
+    """Dossier train/ ou val/ : jeu de GUI_generate_dataset.py (simu_dataset.py) ou .npz de generate_dataset.py --save_masks."""
+    if sd.is_dataset(path):
+        return sd.load_split(path, limit, masks=True)
     items = []
     for f in sorted(glob.glob(os.path.join(path, 'sample_*.npz')))[:limit]:
         d = np.load(f)
@@ -63,7 +92,13 @@ def load_seg_split(path, limit=None):
 
 def make_reconstructor(meta):
     z = GRID['z0_um'] + np.arange(GRID['nb_planes']) * GRID['step_z_um']
-    return hp.Reconstructor(1024, meta['dx_um'], meta['wavelength_um'], meta['index_medium'], z, decim=GRID['decim'])
+    return hp.Reconstructor(meta.get('holo_size', 1024), meta['dx_um'], meta['wavelength_um'], meta['index_medium'], z,
+                            decim=GRID['decim'], high_pass=RECON['high_pass'], low_pass=RECON['low_pass'])
+
+
+def field_of(meta):
+    """Champ latéral (µm) et plage de profondeur des bactéries (µm) d'un hologramme."""
+    return meta.get('holo_size', 1024) * meta['dx_um'], meta.get('z_range_um', [2, 200])
 
 
 def crop_points(item, n, rng, cfg, field_um, zr):
@@ -75,7 +110,7 @@ def crop_points(item, n, rng, cfg, field_um, zr):
     if len(b) > 1 and cfg['mid_fraction'] > 0:
         from scipy.spatial import cKDTree
         d, j = cKDTree(b[:, :3]).query(b[:, :3], k=2)
-        close = np.nonzero(d[:, 1] < 3.0)[0]
+        close = np.nonzero(d[:, 1] < cfg.get('mid_pair_um', MID_PAIR_UM))[0]
         if len(close):
             n_mid = int(round(cfg['mid_fraction'] * n))
             i = rng.choice(close, n_mid)
@@ -107,13 +142,14 @@ def validate(model, val, rec, refocus, cfg, seed=123):
     c_tp = c_gt = c_det = 0
     for it in val:
         V = rec(it['h'].astype(np.float32) + 1.0)
-        tg = s2.CropTargets(it)
+        tg = s2.CropTargets(it, refocus.nz, refocus.nxy, heat=cfg.get('heat'))
         b = it['bacts'][:, :3]
         pts = b + rng.normal(0, 1, b.shape) * np.array([cfg['jitter_xy'], cfg['jitter_xy'], cfg['jitter_z']])
-        neg = np.stack([rng.uniform(0, 179.2, 20), rng.uniform(0, 179.2, 20), rng.uniform(2, 200, 20)], 1)
+        field, zr = field_of(it['meta'])
+        neg = np.stack([rng.uniform(0, field, 20), rng.uniform(0, field, 20), rng.uniform(*zr, 20)], 1)
         allp = np.concatenate([pts, neg])
         P, org, H = s2.segment(m, V, allp, refocus, with_heat=True)
-        owner = s2.assign(b, allp)
+        owner = s2.assign(b, allp, tol=cfg.get('tol', s2.TOL))
         # centres : maxima de la carte contre les vrais centres présents dans chaque fenêtre (hors bord)
         g = it['meta']['mask_grid']
         peaks, _, win = s2.window_peaks(H, org, g['dx_um'], g['dz_um'])
@@ -147,25 +183,50 @@ def validate(model, val, rec, refocus, cfg, seed=123):
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--name', required=True)
-    ap.add_argument('--data', default=os.path.join(DL_DIR, 'data', 'seg_sim'))
-    ap.add_argument('--out', default=os.path.join(DL_DIR, 'runs'))
-    ap.add_argument('--iters', type=int, default=6000)
-    ap.add_argument('--lr', type=float, default=1e-3)
-    ap.add_argument('--warmup', type=int, default=200)
-    ap.add_argument('--holos_per_step', type=int, default=2)
-    ap.add_argument('--crops_per_holo', type=int, default=16)
-    ap.add_argument('--neg_fraction', type=float, default=0.1)
-    ap.add_argument('--mid_fraction', type=float, default=0.15)
-    ap.add_argument('--jitter_xy', type=float, default=0.25)
-    ap.add_argument('--jitter_z', type=float, default=0.5)
-    ap.add_argument('--vmin', type=int, default=20, help="voxels self minimum pour garder une détection")
-    ap.add_argument('--base', type=int, default=16)
-    ap.add_argument('--depth', type=int, default=3)
-    ap.add_argument('--eval_every', type=int, default=500)
-    ap.add_argument('--val_limit', type=int, default=12)
-    ap.add_argument('--seed', type=int, default=0)
+    ap = argparse.ArgumentParser(description="Entraînement de l'étage 2 (segmentation d'instance) du U-Net 3D")
+    ap.add_argument('--name', required=True, help="nom du run (sous-dossier de --out)")
+    ap.add_argument('--data', default=os.path.join(DL_DIR, 'datasets', 'dataset_sim_200um_N20-400'),
+                    help="dossier d'un jeu avec masques d'instance (train/, val/)")
+    ap.add_argument('--z_min_um', type=float, default=None,
+                    help="début du volume grossier (µm) ; défaut : distance volume-caméra du jeu (0 pour un jeu .npz)")
+    ap.add_argument('--z_max_um', type=float, default=None,
+                    help="fin du volume grossier (µm) ; défaut : distance + plans × pas du jeu (207 pour un jeu .npz)")
+    ap.add_argument('--out', default=os.path.join(DL_DIR, 'runs'), help="dossier des runs")
+    ap.add_argument('--decim', type=int, choices=[1, 2, 4], default=DECIM,
+                    help="décimation latérale du volume grossier ; doit être celle de l'étage 1 utilisé avec ce modèle")
+    ap.add_argument('--high_pass', type=float, default=HIGH_PASS, help="filtre passe-haut (px de Fourier du capteur)")
+    ap.add_argument('--low_pass', type=float, default=LOW_PASS, help="filtre passe-bas (px de Fourier du capteur)")
+    ap.add_argument('--z_step', type=float, default=Z_STEP_UM, help="pas Z du volume grossier (µm)")
+    ap.add_argument('--fine_nz', type=int, default=FINE_NZ,
+                    help="fenêtre fine : nombre de plans (pas = pas des masques du jeu) ; multiple de 2^niveaux")
+    ap.add_argument('--fine_nxy', type=int, default=FINE_NXY,
+                    help="fenêtre fine : côté en voxels fins (pixel objet) ; multiple de 2^niveaux")
+    ap.add_argument('--refocus_crop', type=int, default=REFOCUS_CROP,
+                    help="carré du volume grossier refocalisé autour de chaque fenêtre (px grossiers, pair)")
+    ap.add_argument('--heat_sigma_xy_um', type=float, default=HEAT_SIGMA_XY_UM,
+                    help="cible : σ des gaussiennes de la carte fine des centres en XY (µm)")
+    ap.add_argument('--heat_sigma_z_um', type=float, default=HEAT_SIGMA_Z_UM, help="idem en Z (µm)")
+    ap.add_argument('--tol_xy_um', type=float, default=TOL_XY_UM,
+                    help="attribution d'une fenêtre à la bactérie la plus proche : tolérance XY (µm)")
+    ap.add_argument('--tol_z_um', type=float, default=TOL_Z_UM, help="idem en Z (µm)")
+    ap.add_argument('--iters', type=int, default=6000, help="itérations (pas d'optimisation)")
+    ap.add_argument('--lr', type=float, default=1e-3, help="taux d'apprentissage maximal (AdamW)")
+    ap.add_argument('--warmup', type=int, default=200, help="itérations de montée linéaire du taux, puis cosinus")
+    ap.add_argument('--holos_per_step', type=int, default=2, help="hologrammes reconstruits par pas")
+    ap.add_argument('--crops_per_holo', type=int, default=CROPS_PER_HOLO, help="fenêtres tirées de chaque hologramme")
+    ap.add_argument('--neg_fraction', type=float, default=NEG_FRACTION, help="part des fenêtres au hasard (fausses détections)")
+    ap.add_argument('--mid_fraction', type=float, default=MID_FRACTION,
+                    help="part des fenêtres au milieu de deux voisines proches (détection fusionnée)")
+    ap.add_argument('--mid_pair_um', type=float, default=MID_PAIR_UM, help="distance maximale de deux « voisines proches » (µm)")
+    ap.add_argument('--jitter_xy', type=float, default=JITTER_XY_UM,
+                    help="décalage aléatoire σ des fenêtres en XY (µm) : erreur de position simulée de l'étage 1")
+    ap.add_argument('--jitter_z', type=float, default=JITTER_Z_UM, help="idem en Z (µm)")
+    ap.add_argument('--vmin', type=int, default=VMIN, help="voxels self minimum pour garder une détection")
+    ap.add_argument('--base', type=int, default=16, help="canaux du premier niveau (doublés à chaque niveau)")
+    ap.add_argument('--depth', type=int, default=3, help="niveaux du U-Net (sous-échantillonnages par 2)")
+    ap.add_argument('--eval_every', type=int, default=500, help="validation toutes les N itérations")
+    ap.add_argument('--val_limit', type=int, default=12, help="hologrammes de validation utilisés")
+    ap.add_argument('--seed', type=int, default=0, help="graine")
     args = ap.parse_args()
     cfg = vars(args)
     torch.manual_seed(args.seed)
@@ -176,9 +237,27 @@ def main():
     train = load_seg_split(os.path.join(args.data, 'train'))
     val = load_seg_split(os.path.join(args.data, 'val'), args.val_limit)
     meta = train[0]['meta']
+    GRID.update(step_z_um=args.z_step, decim=args.decim)
+    RECON.update(high_pass=args.high_pass, low_pass=args.low_pass)
+    mult = 2 ** args.depth
+    if args.fine_nz % mult or args.fine_nxy % mult:
+        raise ValueError(f"--fine_nz et --fine_nxy : multiples de {mult} (2^niveaux)")
+    # volume grossier : de z_min à z_max (volume simulé du jeu par défaut), plans multiples de 2^depth
+    args.z_min_um, args.z_max_um = sd.resolve_range(os.path.join(args.data, 'train'), args.z_min_um, args.z_max_um)
+    GRID['z0_um'], GRID['nb_planes'] = sd.grid_range(args.z_min_um, args.z_max_um, GRID['step_z_um'], 2 ** args.depth)
+    print(f"volume grossier : {GRID['z0_um']:.1f}–{GRID['z0_um'] + (GRID['nb_planes'] - 1) * GRID['step_z_um']:.1f} µm, "
+          f"{GRID['nb_planes']} plans", flush=True)
     rec = make_reconstructor(meta)
-    refocus = s2.LocalRefocus(rec)
-    cfg.update(grid=dict(GRID), fine=dict(s2.FINE), mask_grid=meta['mask_grid'])
+    # grille fine = grille des masques du simulateur (pas BPM du jeu)
+    fine = dict(nz=args.fine_nz, nxy=args.fine_nxy, dz_um=meta['mask_grid']['dz_um'])
+    if abs(meta['mask_grid']['dx_um'] - rec.dx_um) > 1e-6:
+        raise ValueError(f"grille des masques {meta['mask_grid']['dx_um']} µm ≠ pixel objet {rec.dx_um} µm")
+    refocus = s2.LocalRefocus(rec, nz=fine['nz'], nxy=fine['nxy'], dz_um=fine['dz_um'], crop=args.refocus_crop)
+    cfg.update(grid=dict(GRID), fine=fine, mask_grid=meta['mask_grid'],
+               recon=dict(high_pass=args.high_pass, low_pass=args.low_pass, decim=args.decim),
+               heat=dict(sigma_xy_um=args.heat_sigma_xy_um, sigma_z_um=args.heat_sigma_z_um),
+               tol=dict(xy=args.tol_xy_um, z=args.tol_z_um),
+               optics=dict(dx_um=meta['dx_um'], wavelength_um=meta['wavelength_um'], index_medium=meta['index_medium']))
     model = UNet3D(in_ch=2, out_ch=3, base=args.base, depth=args.depth, norm='batch').cuda()
     model = model.to(memory_format=torch.channels_last_3d)
     cfg['n_params'] = count_parameters(model)
@@ -205,10 +284,10 @@ def main():
         for k in rng.choice(len(train), args.holos_per_step, replace=False):
             item = train[k]
             V = rec(item['h'].astype(np.float32) + 1.0)
-            pts = crop_points(item, args.crops_per_holo, rng, cfg, 179.2, item['meta'].get('z_range_um', [2, 200]))
+            pts = crop_points(item, args.crops_per_holo, rng, cfg, *field_of(item['meta']))
             X, org = refocus(V, pts)
-            owner = s2.assign(item['bacts'][:, :3], pts)
-            T = s2.CropTargets(item)(org, owner, pts)
+            owner = s2.assign(item['bacts'][:, :3], pts, tol=cfg['tol'])
+            T = s2.CropTargets(item, fine['nz'], fine['nxy'], heat=cfg['heat'])(org, owner, pts)
             xs.append(X)
             ts.append(torch.from_numpy(T).cuda())
         x, t = augment(torch.cat(xs), torch.cat(ts), rng)

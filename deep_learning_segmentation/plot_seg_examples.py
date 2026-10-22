@@ -62,12 +62,14 @@ def main():
     import pandas as pd
     os.makedirs(args.out, exist_ok=True)
     m1, cfg1, thr1 = bm.load_model(args.stage1)
-    tr.GRID.update(cfg1['grid'])
+    tr.apply_model_settings(cfg1)
     m2, cfg2 = bs.load_stage2(args.stage2)
     infer = dict(s2.INFER, vmin=cfg2.get('vmin', s2.INFER['vmin']))
     items = t2.load_seg_split(args.data, args.holos)
     rec = tr.make_reconstructor(items[0]['meta'])
-    refocus = s2.LocalRefocus(rec)
+    fine = dict(s2.FINE, **cfg2.get('fine', {}))
+    refocus = s2.LocalRefocus(rec, nz=fine['nz'], nxy=fine['nxy'], dz_um=fine['dz_um'],
+                              crop=cfg2.get('refocus_crop', s2.REFOCUS_CROP))
     store, rows = {}, []
     for k, it in enumerate(items):
         V = rec(it['h'].astype(np.float32) + 1.0)

@@ -51,6 +51,9 @@ REAL_CSV = os.path.join(REAL_FILM, 'TRAJECTORIES_20261016_173113.csv')
 REAL_FRAMES = range(85, 100)
 COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#7a5bd6']
 PAIR_TOL = dict(tol_xy=1.0, tol_z=2.5)     # paires : une détection par membre, tolérances strictes
+# balayage du seuil (cible 'heat') : rappel en fonction du nombre de détections par image, pour comparer des
+# modèles à nombre de détections égal (le seuil de validation simulé n'a pas le même effet sur le film réel)
+SWEEP = [0.02, 0.05, 0.08, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
 
 
 def sync():
@@ -200,16 +203,26 @@ def plot_detections(it, pos, r, method, dataset, k, out_dir):
 
 
 def run_model(model, cfg, thr, items, rec, timings, amp=True, tag='', gt_rows=None, dataset='', p_rows=None,
-              show=(), out_dir=None):
+              show=(), out_dir=None, sweep_rows=None):
     rows = []
+    acc = {t: [0, 0, 0] for t in SWEEP}           # seuil -> (vrais positifs, détections, vérité)
+    # normalisation « film » : chaque jeu est un film, statistiques calculées sur ses hologrammes
+    film = tr.film_stats_of([np.asarray(it['h'], dtype=np.float32) + 1.0 for it in items], rec, cfg) \
+        if cfg.get('norm') in tr.FILM_NORMS else None
     for k, it in enumerate(items):
         sync(); t0 = time.perf_counter()
-        V = to_input(rec(np.asarray(it['h'], dtype=np.float32) + 1.0), cfg)
+        V = to_input(rec(np.asarray(it['h'], dtype=np.float32) + 1.0), cfg, film)
         sync(); t1 = time.perf_counter()
         logits = det.infer_volume(model, V, amp=amp)
         sync(); t2 = time.perf_counter()
         pos, _, axes = detect(logits, cfg['target'], thr, rec, with_axes=True)
         sync(); t3 = time.perf_counter()
+        if sweep_rows is not None and cfg['target'] == 'heat' and p_rows is None:
+            pa, sa = detect(logits, cfg['target'], min(SWEEP), rec)
+            sa = np.asarray(sa)
+            for t in SWEEP:
+                r = det.evaluate(pa[sa >= t], it['bacts'])
+                acc[t][0] += r['tp']; acc[t][1] += r['n_det']; acc[t][2] += r['n_gt']
         if k > 0:      # la première sert de chauffe
             timings.append(dict(method=tag, reconstruction=t1 - t0, network=t2 - t1, postprocess=t3 - t2,
                                 total=t3 - t0))
@@ -224,6 +237,11 @@ def run_model(model, cfg, thr, items, rec, timings, amp=True, tag='', gt_rows=No
         rows.append(r)
         if gt_rows is not None:
             gt_rows += gt_table(it, r, tag.replace(' fp16', ''), dataset)
+    if sweep_rows is not None and acc[SWEEP[0]][2]:
+        for t, (tp, nd, ng) in acc.items():
+            sweep_rows.append(dict(method=tag.replace(' fp16', ''), dataset=dataset, threshold=t, recall=tp / ng,
+                                   precision=tp / nd if nd else float('nan'), det_per_image=nd / len(items),
+                                   gt_per_image=ng / len(items), model_threshold=thr))
     return rows
 
 
@@ -370,7 +388,8 @@ def plot_training(run_dirs, out_dir):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--runs', nargs='+', required=True)
-    ap.add_argument('--datasets', nargs='+', default=['seg_sim'])
+    ap.add_argument('--datasets', nargs='+', default=['dataset_sim_200um'],
+                    help="jeux (dossiers contenant test/) : chemin, ou nom dans datasets/ ou data/")
     ap.add_argument('--no_real', action='store_true')
     ap.add_argument('--no_classical', action='store_true')
     ap.add_argument('--no_pairs', action='store_true')
@@ -381,13 +400,18 @@ def main():
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
-    sets = {d: load_split(os.path.join(DL_DIR, 'data', d, 'test')) for d in args.datasets}
+    # jeu : chemin tel quel, sinon dans deep_learning_segmentation/, datasets/ ou data/ ; nommé par son dossier
+    find = lambda d: next((p for p in (d, os.path.join(DL_DIR, d), os.path.join(DL_DIR, 'datasets', d),
+                                       os.path.join(DL_DIR, 'data', d)) if os.path.isdir(os.path.join(p, 'test'))), d)
+    test_dirs = {os.path.basename(os.path.normpath(d)): os.path.join(find(d), 'test') for d in args.datasets}
+    args.datasets = list(test_dirs)
+    sets = {d: load_split(p) for d, p in test_dirs.items()}
     if not args.no_real:
         sets['film réel'] = real_film_items()
     pairs_dir = args.pairs_dir
     pairs = load_split(pairs_dir) if (not args.no_pairs and os.path.isdir(pairs_dir)) else []
-    meta = next(iter(load_split(os.path.join(DL_DIR, 'data', args.datasets[0], 'test'), 1)))['meta']
-    metrics, timings, gt_rows, p_rows = [], [], [], []
+    meta = next(iter(load_split(test_dirs[args.datasets[0]], 1)))['meta']
+    metrics, timings, gt_rows, p_rows, sweep_rows = [], [], [], [], []
     show = {name: set(pick_examples(items, name)) if not args.no_examples else set()
             for name, items in list(sets.items()) + [('paires', pairs)]}
 
@@ -417,13 +441,14 @@ def main():
                 for r in args.runs]
     for rd in run_dirs:
         model, cfg, thr = load_model(rd)
-        tr.GRID.update(cfg['grid'])           # grille propre au modèle (pas Z)
+        tr.apply_model_settings(cfg)          # grille, filtre et maxima propres au modèle
         rec = make_reconstructor(meta)
         name = os.path.basename(rd)
         for dname, items in sets.items():
             print(f"{name} / {dname} (seuil {thr})", flush=True)
             rows = run_model(model, cfg, thr, items, rec, timings if dname == args.datasets[0] else [],
-                             tag=f"{name} fp16", gt_rows=gt_rows, dataset=dname, show=show[dname], out_dir=args.out)
+                             tag=f"{name} fp16", gt_rows=gt_rows, dataset=dname, show=show[dname], out_dir=args.out,
+                             sweep_rows=sweep_rows)
             metrics += by_density(rows, name, dname)
         if pairs:
             print(f"{name} / paires", flush=True)
@@ -443,6 +468,8 @@ def main():
 
     df = pd.DataFrame(metrics)
     df.to_csv(os.path.join(args.out, 'metrics.csv'), index=False)
+    if sweep_rows:
+        pd.DataFrame(sweep_rows).to_csv(os.path.join(args.out, 'threshold_sweep.csv'), index=False)
     pd.DataFrame(gt_rows).to_csv(os.path.join(args.out, 'gt_table.csv'), index=False)
     if p_rows:
         pr = pd.DataFrame(p_rows)

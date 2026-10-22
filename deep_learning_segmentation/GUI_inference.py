@@ -6,16 +6,19 @@ Filename: GUI_inference.py
 Description:
 Interface d'inférence de la chaîne U-Net 3D (inference_pipeline.py) : positions 3D (étage 1) et volume
 segmenté par instance (étage 2) sur un film holographique ou un hologramme.
-  - Entrée : dossier d'images (BMP, TIFF, PNG), normalisation (moyenne du film, de l'image, aucune),
-    plage d'images ; Modèles : dossiers des runs (model_best.pt) des deux étages, optique ;
-    Réglages : seuil de l'étage 1, nombre de tours de l'étage 2, a priori temporel (centres de l'image
-    précédente ajoutés aux candidats) ; Sortie : CSV (colonnes d'HOLOTRACKER + mesures), instances .npz.
+  - Entrée : dossier d'images (BMP, TIFF, PNG), suppression de l'hologramme moyen du film (division ou
+    soustraction ; ou aucune), plage d'images ; Modèles : dossiers des runs (model_best.pt) des deux étages ; Reconstruction : pixel
+    caméra, grossissement, longueur d'onde, indice du milieu, plage de profondeur (z min, z max), pas Z,
+    décimation latérale, filtre passe-bande (vides : valeurs d'entraînement du modèle ; tout écart est
+    signalé) ; Réglages : seuil de l'étage 1, nombre de tours de l'étage 2, a priori temporel (centres de
+    l'image précédente ajoutés aux candidats) ; Sortie : CSV (colonnes d'HOLOTRACKER + mesures), instances .npz.
   - « Image n° » calcule une image seule (◀ ▶ : voisines) ; « Lancer le lot » traite la plage et exporte.
   - Vues : hologramme + détections (z en µm), instances en projection XY, XZ, YZ ; Haut / Bas dans le
     menu changent de vue ; le zoom est conservé d'une image à l'autre. Un clic sur une bactérie (hors mode
     zoom / déplacement) ouvre ses trois coupes de segmentation XY, XZ, YZ par son centre : amplitude du champ
     refocalisé sur la grille fine, masque de la bactérie, masques des voisines.
-  - Profondeur maximale de recherche (100 µm par défaut) ; BMP des localisations en sortie.
+  - Recherche entre z min et z max (0–100 µm par défaut, seuls les plans utiles sont reconstruits) ; BMP des
+    localisations en sortie.
 Le calcul tourne hors de la boucle Tk (gui_messages.TaskRunner, fil de travail : les modèles chargés sont
 partagés) ; MessagePump relève les messages par paquets bornés et n'affiche que la dernière image reçue :
 l'interface reste réactive pendant un lot.
@@ -50,30 +53,56 @@ from gui_messages import MessagePump, TaskRunner
 
 PARAMS_FILE = os.path.join(DL_DIR, "GUI_inference_params.json")
 DEFAULTS = {
-    'folder': os.path.join(REPO_DIR, 'REAL HOLO FILM', 'bacterias'), 'ext': 'bmp', 'normalization': 'film_mean',
+    'folder': os.path.join(REPO_DIR, 'REAL HOLO FILM', 'bacterias'), 'ext': 'bmp', 'mean_removal': 'division',
     'first': 0, 'last': -1,
     'stage1': os.path.join(DL_DIR, 'models', 'stage1'), 'stage2': os.path.join(DL_DIR, 'models', 'stage2'),
-    'dx_um': 0.175, 'wavelength_um': 0.66, 'index_medium': 1.33,
-    'thr1': '', 'rounds': 2, 'prior': False, 'vmin': 20, 'heat_thr': 0.3, 'z_max': '100', 'save_bmp': True,
+    'pix_size_um': 7.0, 'magnification': 40.0, 'wavelength_um': 0.66, 'index_medium': 1.33,
+    'z_min': '0', 'z_max': '100', 'z_step': '', 'decim': 'modèle', 'high_pass': '', 'low_pass': '', 'z_margin': '',
+    'thr1': '', 'rounds': 2, 'prior': False, 'peak_box': '', 'film_holos': '',
+    'vmin': 20, 'heat_thr': 0.3, 'nms2': '5 5 5', 'border2': 2, 'same_xy': 0.5, 'same_z': 1.0,
+    'dup_iou': 0.5, 'dup_xy': 1.5, 'dup_z': 3.0, 'save_bmp': True,
     'out_dir': os.path.join(DL_DIR, 'runs_inference'), 'save_npz': True,
 }
-NORM = {'film_mean': "moyenne du film", 'image_mean': "moyenne de l'image", 'none': "aucune (déjà normalisée)"}
+REMOVAL = {'division': "division par l'hologramme moyen", 'subtraction': "soustraction de l'hologramme moyen",
+           'image_mean': "aucune (÷ moyenne de l'image)", 'none': "aucune (fond déjà à 1)"}
 TABS = {
     "Entrée": [
         ('folder', "Dossier du film", 'dir', "Dossier des hologrammes (une image par fichier, ordre alphabétique)"),
         ('ext', "Extension", ['bmp', 'tif', 'tiff', 'png', '*'], "Type d'image ; * : toutes"),
-        ('normalization', "Normalisation", list(NORM.values()),
-         "Fond ramené à 1 : division par la moyenne du film (comme HOLOTRACKER), par la moyenne de l'image, "
-         "ou aucune si les images sont déjà normalisées (TIFF du simulateur)"),
+        ('mean_removal', "Suppression de l'hologramme moyen", list(REMOVAL.values()),
+         "Hologramme moyen M = moyenne de toutes les images du film. Division I / M (comme HOLOTRACKER) : retire "
+         "aussi un éclairage non uniforme et les poussières fixes. Soustraction (I − M) / <M> + 1 : équivalente si "
+         "l'éclairage est uniforme, sinon le signal reste modulé par l'éclairage. Aucune : image seule divisée par "
+         "sa moyenne (hologramme isolé, BMP simulé), ou rien si le fond vaut déjà 1 (TIFF du simulateur)"),
         ('first', "Première image", 'int', "Indice (0 = première) ; aussi l'image de départ de l'aperçu"),
         ('last', "Dernière image", 'int', "Indice inclus ; −1 = fin du film"),
     ],
     "Modèles": [
         ('stage1', "Étage 1 (positions)", 'dir', "Dossier d'un run de train.py (model_best.pt)"),
         ('stage2', "Étage 2 (instances)", 'dir', "Dossier d'un run de train_stage2.py ; vide : positions seules"),
-        ('dx_um', "Pixel objet (µm)", 'float', "Pixel caméra / grossissement (7 µm / 40 = 0,175)"),
+    ],
+    "Reconstruction": [
+        ('pix_size_um', "Pixel caméra (µm)", 'float', "Pixel objet = pixel caméra / grossissement (7 µm / 40 = 0,175 µm)"),
+        ('magnification', "Grossissement", 'float', ""),
         ('wavelength_um', "Longueur d'onde (µm)", 'float', "Dans le vide"),
         ('index_medium', "Indice du milieu", 'float', ""),
+        ('z_min', "Profondeur minimale (µm)", 'str', "Distance de refocalisation à partir de laquelle on cherche"),
+        ('z_max', "Profondeur maximale (µm)", 'str',
+         "Seuls les plans utiles sont reconstruits (z min − 8 à z max + 8 µm) ; vide : jusqu'au bout de la plage du "
+         "modèle (207 µm)"),
+        ('z_step', "Pas Z (µm)", 'str', "Pas des plans reconstruits ; vide : celui de l'entraînement (1 µm). Un autre pas "
+                                       "change ce que voit le réseau : à valider"),
+        ('decim', "Décimation latérale", ['modèle', '1', '2', '4'],
+         "Pixel du volume = pixel objet × décimation, par recadrage du spectre (sans perte si le passe-bas est ≤ "
+         "taille / (2 × décimation)) ; modèle : celle de l'entraînement. L'étage 2 exige celle de son entraînement"),
+        ('high_pass', "Passe-haut (px de Fourier)", 'str',
+         "Rayon en pixels de Fourier du capteur en dessous duquel le spectre est coupé (fond lentement variable) ; "
+         "vide : valeur d'entraînement du modèle (15)"),
+        ('low_pass', "Passe-bas (px de Fourier)", 'str',
+         "Rayon au-delà duquel le spectre est coupé (bruit haute fréquence) ; vide : valeur d'entraînement (250)"),
+        ('z_margin', "Marge de reconstruction (µm)", 'str',
+         "Plans reconstruits de part et d'autre de la plage de recherche, pour que le réseau ne voie pas de bord ; "
+         "vide : 8 µm"),
     ],
     "Réglages": [
         ('thr1', "Seuil de l'étage 1", 'str', "Vide : seuil retenu en validation pour ce modèle"),
@@ -83,11 +112,32 @@ TABS = {
         ('prior', "A priori de l'image précédente", 'bool',
          "Lot : les centres des instances de l'image précédente sont ajoutés aux candidats de l'étage 2 "
          "(une bactérie bouge peu d'une image à l'autre ; un candidat sans bactérie est rejeté)"),
-        ('vmin', "Voxels minimum d'une instance", 'int', "En dessous : fausse détection rejetée"),
-        ('heat_thr', "Seuil des centres (étage 2)", 'float', "Carte fine des centres, second tour"),
-        ('z_max', "Profondeur maximale (µm)", 'str',
-         "Recherche entre 0 et cette profondeur (seuls les plans utiles sont reconstruits) ; vide : toute la plage "
-         "du modèle (0–207 µm)"),
+        ('peak_box', "Fenêtre des maxima, étage 1 (Z Y X)", 'str',
+         "Une détection = un maximum local de la carte des centres dans cette fenêtre (voxels grossiers, valeurs "
+         "impaires, p. ex. « 3 5 5 » = 3 µm × 1,75 µm × 1,75 µm) ; plus grande : moins de doublons mais deux "
+         "bactéries proches fusionnent ; vide : celle du modèle"),
+        ('film_holos', "Images pour les statistiques du film", 'str',
+         "Modèles à normalisation « film » (MAD ou écart-type du film) : nombre d'images, régulièrement espacées, "
+         "sur lesquelles le centre et l'échelle sont mesurés ; vide : celui du modèle (32)"),
+        ('vmin', "Voxels minimum d'une instance", 'int',
+         "Étage 2 : une instance de moins de voxels fins est une fausse détection (une bactérie de 1,8 × 0,6 µm "
+         "fait ≈ 60 voxels)"),
+        ('heat_thr', "Seuil des centres (étage 2)", 'float',
+         "Étage 2 : seuil des maxima de la carte fine des centres ; ces centres, s'ils ne correspondent à aucune "
+         "instance, deviennent les fenêtres du second tour"),
+        ('nms2', "Fenêtre des maxima, étage 2 (Z Y X)", 'str',
+         "Étage 2 : fenêtre des maxima locaux de la carte fine des centres (voxels fins de 0,25 × 0,175 × 0,175 µm, "
+         "valeurs impaires)"),
+        ('border2', "Bord ignoré des fenêtres (voxels)", 'int',
+         "Étage 2 : les maxima à moins de ce nombre de voxels du bord d'une fenêtre sont ignorés (bactérie tronquée)"),
+        ('same_xy', "Même centre à moins de (XY, µm)", 'float',
+         "Second tour : deux centres plus proches que cela (en XY et en Z) sont la même bactérie"),
+        ('same_z', "Même centre à moins de (Z, µm)", 'float', ""),
+        ('dup_iou', "Doublons : IoU de fusion", 'float',
+         "Deux instances voisines dont les masques se recouvrent au-delà de cette IoU sont fusionnées (on garde la "
+         "plus grosse) ; plus bas : moins de doublons, mais risque de fusionner deux bactéries collées"),
+        ('dup_xy', "Doublons : voisinage XY (µm)", 'float', "Distance entre centres en dessous de laquelle l'IoU est testée"),
+        ('dup_z', "Doublons : voisinage Z (µm)", 'float', ""),
     ],
     "Sortie": [
         ('out_dir', "Dossier de sortie", 'dir',
@@ -223,22 +273,54 @@ class InferenceGUI:
             p[key] = v
         if errors:
             raise ValueError("Valeurs numériques invalides : " + ", ".join(errors))
-        p['normalization'] = {v: k for k, v in NORM.items()}.get(p['normalization'], 'film_mean')
+        p['mean_removal'] = {v: k for k, v in REMOVAL.items()}.get(p['mean_removal'], 'division')
         p['rounds'] = int(p['rounds'])
         thr = str(p.get('thr1', '')).strip().replace(',', '.')
         p['thr1'] = float(thr) if thr else None
-        zm = str(p.get('z_max', '')).strip().replace(',', '.')
-        p['z_max'] = float(zm) if zm else None
+        for k in ('z_min', 'z_max', 'z_step', 'high_pass', 'low_pass', 'z_margin'):
+            v = str(p.get(k, '')).strip().replace(',', '.')
+            try:
+                p[k] = float(v) if v else None
+            except ValueError:
+                raise ValueError(f"Valeur numérique invalide : {k} = {v!r}")
+        p['decim'] = None if p.get('decim') in ('', 'modèle', None) else int(p['decim'])
+        for k in ('peak_box', 'nms2'):          # trois entiers « Z Y X » ; vide : défaut
+            v = str(p.get(k, '')).replace(',', ' ').split()
+            try:
+                p[k] = [int(x) for x in v] if v else None
+            except ValueError:
+                raise ValueError(f"{k} : trois entiers attendus ({' '.join(v)!r})")
+            if p[k] is not None and len(p[k]) != 3:
+                raise ValueError(f"{k} : trois entiers attendus (Z Y X)")
+        v = str(p.get('film_holos', '')).strip()
+        p['film_holos'] = int(v) if v else None
+        if p['magnification'] <= 0:
+            raise ValueError("grossissement > 0")
+        p['dx_um'] = p['pix_size_um'] / p['magnification']
         return p
 
+    @staticmethod
+    def optics_recon(p):
+        optics = dict(dx_um=p['dx_um'], wavelength_um=p['wavelength_um'], index_medium=p['index_medium'])
+        recon = dict(z_min_um=p['z_min'] or 0.0, z_max_um=p['z_max'], step_z_um=p['z_step'], decim=p['decim'],
+                     high_pass=p['high_pass'], low_pass=p['low_pass'], z_margin_um=p['z_margin'])
+        return optics, recon
+
     def set_params(self, p):
+        if 'mean_removal' not in p and 'normalization' in p:                 # anciens réglages (« normalisation »)
+            p = dict(p, mean_removal={'film_mean': 'division'}.get(p['normalization'], p['normalization']))
         p = dict(DEFAULTS, **p)
         for key, (var, kind) in self.vars.items():
             v = p.get(key, '')
-            if key == 'normalization':
-                v = NORM.get(v, v)
-            if key in ('thr1', 'z_max') and v is None:
+            if key == 'mean_removal':
+                v = REMOVAL.get(v, v)
+            if key in ('thr1', 'z_min', 'z_max', 'z_step', 'high_pass', 'low_pass', 'z_margin', 'peak_box', 'nms2',
+                       'film_holos') and v is None:
                 v = ''
+            if isinstance(v, (list, tuple)):
+                v = ' '.join(str(x) for x in v)
+            if key == 'decim' and v in (None, ''):
+                v = 'modèle'
             var.set(v)
 
     def load_params(self):
@@ -466,12 +548,12 @@ class InferenceGUI:
             messagebox.showerror("Modèles", f"pas de model_best.pt dans {p['stage1']}")
             return
         self.save_params()
-        key = (p['stage1'], st2, p['dx_um'], p['wavelength_um'], p['index_medium'])
-        optics = dict(dx_um=p['dx_um'], wavelength_um=p['wavelength_um'], index_medium=p['index_medium'])
+        key = (p['stage1'], st2)
+        optics, recon = self.optics_recon(p)
         self.task, self.then = 'load', then
         self.set_busy(True)
         self.log("Chargement des modèles…")
-        self.runner.start(_load_pipeline, p['stage1'], st2, optics, key)
+        self.runner.start(_load_pipeline, p['stage1'], st2, optics, recon, key)
 
     def start_batch(self, preview):
         if self.runner.busy():
@@ -481,16 +563,28 @@ class InferenceGUI:
         except ValueError as e:
             messagebox.showerror("Paramètres", str(e))
             return
-        key = (p['stage1'], p['stage2'] if p['stage2'] and os.path.isfile(os.path.join(p['stage2'], 'model_best.pt')) else None,
-               p['dx_um'], p['wavelength_um'], p['index_medium'])
+        key = (p['stage1'], p['stage2'] if p['stage2'] and os.path.isfile(os.path.join(p['stage2'], 'model_best.pt')) else None)
         if self.pipeline is None or self.pipeline_key != key:
             self.load_models(then=lambda: self.start_batch(preview))
             return
-        if self.pipeline.infer is not None:
-            self.pipeline.infer.update(vmin=int(p['vmin']), heat_thr=float(p['heat_thr']))
-        if self.pipeline.z_max_um != p['z_max']:
-            self.pipeline.set_z_max(p['z_max'])
-            self.model_label.configure(text=self.pipeline.describe())
+        shown = self.pipeline.describe()
+        try:
+            self.pipeline.set_post(peak_box=p['peak_box'], film_holos=p['film_holos'], heat_thr=p['heat_thr'],
+                                   nms=p['nms2'], border=p['border2'], same_xy_um=p['same_xy'], same_z_um=p['same_z'],
+                                   vmin=p['vmin'], dup_iou=p['dup_iou'], dup_xy_um=p['dup_xy'], dup_z_um=p['dup_z'])
+        except ValueError as e:
+            messagebox.showerror("Réglages", str(e))
+            return
+        optics, recon = self.optics_recon(p)
+        before = (dict(self.pipeline.optics), dict(self.pipeline.recon))
+        try:
+            self.pipeline.configure(optics, recon)
+        except ValueError as e:
+            self.pipeline.configure(*before)
+            messagebox.showerror("Reconstruction", str(e))
+            return
+        if self.pipeline.describe() != shown or self.model_label.cget('text') != shown:
+            self.show_pipeline()
         if preview:
             try:
                 i = max(int(self.preview_index.get()), 0)
@@ -539,13 +633,18 @@ class InferenceGUI:
         self.set_busy(False)
         if task == 'load':
             self.pipeline, self.pipeline_key = result
-            self.model_label.configure(text=self.pipeline.describe())
-            self.log(self.pipeline.describe())
+            self.show_pipeline()
             then, self.then = self.then, None
             if then:
                 then()
         elif task == 'batch':
             self.log(f"Lot terminé : {json.dumps(result, ensure_ascii=False, default=str)}")
+
+    def show_pipeline(self):
+        """Modèles et reconstruction en cours ; écarts avec l'entraînement en orange."""
+        w = self.pipeline.warnings()
+        self.model_label.configure(text=self.pipeline.describe(), foreground='#c25100' if w else '')
+        self.log(self.pipeline.describe())
 
     def on_error(self, tb):
         self.task = None
@@ -575,9 +674,9 @@ def _paste_window(mask, mask_org, win_org, shape):
     return out
 
 
-def _load_pipeline(rep, stage1, stage2, optics, key):
+def _load_pipeline(rep, stage1, stage2, optics, recon, key):
     import inference_pipeline as ip
-    return ip.Pipeline(stage1, stage2, optics), key
+    return ip.Pipeline(stage1, stage2, optics, recon=recon), key
 
 
 def _run_batch(rep, pipeline, params, cache):
